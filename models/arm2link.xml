@@ -22,7 +22,6 @@
          この練習では衝突を使わないので、床に当たって動きが乱れるのを防ぐ。 -->
     <geom contype="0" conaffinity="0"/>
     <joint damping="0.5"/>
-    <position kp="20" kv="2"/>
   </default>
 
   <worldbody>
@@ -56,9 +55,12 @@
     </body>
   </worldbody>
 
-  <!-- 位置指令のモータ。ctrl[0]=q1 の目標角度、ctrl[1]=q2 の目標角度 [rad]。 -->
+  <!-- トルク指令のモータ。ctrl[0]=q1 を回すトルク、ctrl[1]=q2 を回すトルク [N·m]。
+       <motor> は「ctrl に入れた値がそのままトルクになる」素直なモータ。
+       位置を合わせる計算(PD制御)は MuJoCo ではなく Python 側(controller.py)で行う。
+       ctrlrange: トルクの上限・下限 [N·m]。範囲外の値は自動で丸められる(実機の限界を模擬)。 -->
   <actuator>
-    <position name="a_q1" joint="q1"/>
-    <position name="a_q2" joint="q2"/>
+    <motor name="a_q1" joint="q1" ctrlrange="-2 2"/>
+    <motor name="a_q2" joint="q2" ctrlrange="-2 2"/>
   </actuator>
 </mujoco>

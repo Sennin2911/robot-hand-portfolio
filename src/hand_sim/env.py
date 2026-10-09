@@ -67,6 +67,11 @@ class HandEnv:
         # .copy(): コピーを返す。元のデータを呼び出し側が誤って書き換えるのを防ぐ。
         return self.data.qpos[: self.model.nu].copy()
 
+    def joint_vel(self):
+        """各関節の現在の速度(角速度[rad/s]、スライドは[m/s])を返す。並びは joint_pos と同じ。"""
+        # qvel: 全関節の速度の配列。qpos と同じ並びなので、同様に先頭から nu 個を取る。
+        return self.data.qvel[: self.model.nu].copy()
+
     def body_pos(self, name):
         """名前で指定した物体(body)の位置 [x, y, z] (単位m) を返す。"""
         # xpos：各ボディ・jointの世界座標
