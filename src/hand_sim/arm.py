@@ -24,13 +24,6 @@ def fk(q1, q2):
     return np.array([x, y])
     raise NotImplementedError("fk が未実装です")
 
-def ik(x, y):
-    d = np.sqrt(x**2 + y**2)
-    q1 = np.arccos((d**2 - L1 - L2) / 2 * L1 * L2)
-    q2 = np.atan2(y, x) - np.atan2(L2 * sin(q1), (L1 + L2 * cos(q2)))
-    return fk(q1, q2)
-    raise 
-
 def ik(x, y, elbow=+1):
     """逆運動学: 手先の目標位置 (x, y) [m] から、関節角 (q1, q2) [rad] を返す。
 
@@ -42,5 +35,11 @@ def ik(x, y, elbow=+1):
             余弦定理を使うと cos(q2) が求まる。q1 は「目標の方向角」から
             「肘が曲がったことで生じるずれの角」を引く。
     """
-    # TODO: ここを自分で書く。
+    d = np.sqrt(x**2 + y**2)
+    cos_q2 = (d**2 - L1**2 - L2**2) / (2 * L1 * L2)
+    if abs(cos_q2) > 1 + 1e-9:
+        raise ValueError(f"目標 ({x}, {y}) には届きません")
+    q2 = elbow * np.arccos(np.clip(cos_q2, -1, 1))
+    q1 = np.arctan2(y, x) - np.arctan2(L2 * np.sin(q2), (L1 + L2 * np.cos(q2)))
+    return q1, q2
     raise NotImplementedError("ik が未実装です")
