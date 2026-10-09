@@ -50,7 +50,7 @@
     </body>
 
     <!-- 逆運動学の「目標点」を示す印。mocap="true" は、物理計算とは無関係に
-         プログラムから位置を自由に置ける(動かせる)body にする設定。 -->
+         プログラムから位置を自由に置ける(動かせる)body にする設定。つまり計算の対象にはならない -->
     <body name="goal" pos="0.2 0.1 0.05" mocap="true">
       <geom type="sphere" size="0.015" material="goal"/>
     </body>

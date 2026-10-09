@@ -22,7 +22,6 @@ def fk(q1, q2):
     x = L1 * np.cos(q1) + L2 * np.cos(q1 + q2)
     y = L1 * np.sin(q1) + L2 * np.sin(q1 + q2)
     return np.array([x, y])
-    raise NotImplementedError("fk が未実装です")
 
 def ik(x, y, elbow=+1):
     """逆運動学: 手先の目標位置 (x, y) [m] から、関節角 (q1, q2) [rad] を返す。
@@ -42,4 +41,3 @@ def ik(x, y, elbow=+1):
     q2 = elbow * np.arccos(np.clip(cos_q2, -1, 1))
     q1 = np.arctan2(y, x) - np.arctan2(L2 * np.sin(q2), (L1 + L2 * np.cos(q2)))
     return q1, q2
-    raise NotImplementedError("ik が未実装です")
