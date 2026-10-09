@@ -21,7 +21,7 @@
     <!-- 見た目だけの形にする: contype/conaffinity=0 は「何とも衝突しない」設定。
          この練習では衝突を使わないので、床に当たって動きが乱れるのを防ぐ。 -->
     <geom contype="0" conaffinity="0"/>
-    <joint damping="0.5"/>
+    <joint damping="0.01"/>
   </default>
 
   <worldbody>
