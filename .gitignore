@@ -3,3 +3,4 @@ __pycache__/
 outputs/*
 !outputs/.gitkeep
 MUJOCO_LOG.TXT
+最短ポートフォリオ計画*.md
