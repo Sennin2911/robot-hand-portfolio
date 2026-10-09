@@ -1,0 +1,95 @@
+<!-- 【概要】MuJoCoのモデル定義(MJCF形式のXML)。シミュレータの「世界」を記述する:
+     床・ハンド・把持対象・カメラ・モータ。単位は m(長さ)、rad(角度)、kg(質量)。 -->
+<mujoco model="hand_scene">
+  <!-- compiler: 角度をラジアンで書く設定。 -->
+  <compiler angle="radian" autolimits="true"/>
+  <!-- option: 物理計算の設定。timestep=1ステップの時間[秒]。integrator=計算方法。
+       cone/impratio=摩擦の計算の精度設定(把持が滑りにくくなる)。 -->
+  <option timestep="0.002" integrator="implicitfast" cone="elliptic" impratio="10"/>
+  <visual>
+    <global offwidth="1280" offheight="720"/>
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.6 0.6 0.6"/>
+  </visual>
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="256" height="256" rgb1=".85 .85 .85" rgb2=".75 .75 .75"/>
+    <material name="grid" texture="grid" texrepeat="6 6" reflectance="0.1"/>
+    <material name="hand" rgba="0.25 0.45 0.8 1"/>
+    <material name="target" rgba="0.9 0.35 0.2 1"/>
+  </asset>
+  <!-- default: 以降の要素に共通で適用する初期値。friction=摩擦係数、damping=関節の粘り、
+       kp/kv=位置制御の強さ(PD制御の係数)。 -->
+  <default>
+    <geom friction="1.5 0.02 0.002" condim="4"/>
+    <!-- これ以降に書く <joint> は、damping が省略されていたら 0.05 にする」という初期値の雛形 -->
+    <joint damping="0.05"/>
+    <position kp="40" kv="1.5"/>
+  </default>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1"/>
+    <geom name="table" type="plane" size="0.5 0.5 0.05" material="grid"/>
+    <camera name="front" pos="0 -0.55 0.3" xyaxes="1 0 0 0 0.45 0.9"/>
+    <camera name="top" pos="0 0 0.7" xyaxes="1 0 0 0 1 0"/>
+
+    <!-- 2指ハンド: 手のひら(palm)が上下にスライドし、各指は2関節(基節=付け根、先節=先端側) -->
+    <!-- 手のひらの全体構成（指を含む） -->
+    <!-- 手のひらのポジション設定 -->
+    <body name="palm" pos="0 0 0.22">
+      <!-- 手のひらのパーツはスライド(slide)のみ行う -->
+      <!-- joint: どう動くかの設定 -->
+      <!-- geom: どんな形かの設定 -->
+      <!-- jointのtype: どう動くかの設定だが、省略した場合はhingeになる。 -->
+      <!-- axis: どう動くかの軸の設定。0 0 1 は z 軸方向。 -->
+      <!-- range: どう動くかの範囲の設定。-0.14 0 は -0.14 から 0 の範囲。 -->
+      <!-- damping: どう動くかの粘性の設定。5 は 5 の粘性。 -->
+      <joint name="palm_z" type="slide" axis="0 0 1" range="-0.14 0" damping="5"/>
+      <geom name="palm_geom" type="box" size="0.07 0.025 0.01" mass="0.3" material="hand"/>
+      <!-- 左指の全体構成 -->
+      <!-- 根本のポジション設定 -->
+      <body name="finger_l" pos="-0.05 0 -0.01"> 
+        <!-- 左指の基節 -->
+        <!-- jointのtype: どう動くかの設定だが、省略した場合はhingeになる。 -->
+        <joint name="l_prox" axis="0 1 0" range="-1.2 0.1"/>
+        <geom type="capsule" fromto="0 0 0 0 0 -0.05" size="0.008" mass="0.03" material="hand"/>
+        <!-- 左指の中節 -->
+        <!-- ポジション設定 -->
+        <body pos="0 0 -0.05">
+          <!-- ジョイント設定 -->
+          <joint name="l_dist" axis="0 1 0" range="-1.2 0.1"/>
+          <geom name="l_tip" type="capsule" fromto="0 0 0 0 0 -0.04" size="0.008" mass="0.02" material="hand"/>
+        </body>
+      </body>
+      <!-- 右指の全体構成 -->
+      <!-- 根本のポジション設定 -->
+      <body name="finger_r" pos="0.05 0 -0.01">
+        <!-- 右指の基節 -->
+        <joint name="r_prox" axis="0 1 0" range="-0.1 1.2"/>
+        <geom type="capsule" fromto="0 0 0 0 0 -0.05" size="0.008" mass="0.03" material="hand"/>
+        <!-- 右指の中節 -->
+        <!-- ポジション設定 -->
+        <body pos="0 0 -0.05">
+          <!-- ジョイント設定 -->
+          <joint name="r_dist" axis="0 1 0" range="-0.1 1.2"/>
+          <geom name="r_tip" type="capsule" fromto="0 0 0 0 0 -0.04" size="0.008" mass="0.02" material="hand"/>
+        </body>
+      </body>
+    </body>
+
+    <body name="target" pos="0 0 0.02">
+      <freejoint name="target_free"/>
+      <geom name="target_geom" type="box" size="0.02 0.02 0.02" mass="0.05" material="target"/>
+    </body>
+  </worldbody>
+
+  <!-- actuator: 関節を動かすモータ。position=「目標位置を指令すると、そこへ引っ張る」方式。
+       ctrl に入れる値が目標位置。並び順が Python 側の指令値の並び順になる。 -->
+  <!-- 順番を守って設定する。ctrlはこのactuator配下のpositionの順番になる。ctrl[1]はa_l_proxの目標位置。
+  worldbodyの順番を自動で設定するわけではない。 -->
+  <actuator>
+    <position name="a_palm_z" joint="palm_z" kp="2000" kv="100" ctrlrange="-0.14 0"/>
+    <position name="a_l_prox" joint="l_prox"/>
+    <position name="a_l_dist" joint="l_dist"/>
+    <position name="a_r_prox" joint="r_prox"/>
+    <position name="a_r_dist" joint="r_dist"/>
+  </actuator>
+</mujoco>
