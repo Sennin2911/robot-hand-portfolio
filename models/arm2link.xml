@@ -1,0 +1,64 @@
+<!-- 【概要】2リンクの平面アームのモデル(MJCF形式)。順運動学・逆運動学の練習用。
+     床(xy平面)の上で、真上から見て水平面内を動く。関節の軸は z 軸なので、
+     角度 q1, q2 を使った教科書どおりの式がそのまま成り立つ:
+       先端x = L1*cos(q1) + L2*cos(q1+q2)
+       先端y = L1*sin(q1) + L2*sin(q1+q2)
+     単位は m(長さ)、rad(角度)。 -->
+<mujoco model="arm2link">
+  <compiler angle="radian" autolimits="true"/>
+  <option timestep="0.002" integrator="implicitfast"/>
+  <visual>
+    <global offwidth="1280" offheight="720"/>
+    <headlight ambient="0.4 0.4 0.4" diffuse="0.6 0.6 0.6"/>
+  </visual>
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="256" height="256" rgb1=".85 .85 .85" rgb2=".75 .75 .75"/>
+    <material name="grid" texture="grid" texrepeat="6 6" reflectance="0.1"/>
+    <material name="arm" rgba="0.25 0.45 0.8 1"/>
+    <material name="goal" rgba="0.9 0.35 0.2 0.6"/>
+  </asset>
+  <default>
+    <!-- 見た目だけの形にする: contype/conaffinity=0 は「何とも衝突しない」設定。
+         この練習では衝突を使わないので、床に当たって動きが乱れるのを防ぐ。 -->
+    <geom contype="0" conaffinity="0"/>
+    <joint damping="0.5"/>
+    <position kp="20" kv="2"/>
+  </default>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1"/>
+    <geom name="floor" type="plane" size="0.5 0.5 0.05" material="grid"/>
+    <!-- 真上から見下ろすカメラ。アームが動く xy 平面がそのまま画面に映る。 -->
+    <camera name="top" pos="0.1 0 0.9" xyaxes="1 0 0 0 1 0"/>
+
+    <!-- 肩(ベース)の位置: 原点の真上 0.05m。ここが関節1の回転中心。 -->
+    <body name="link1" pos="0 0 0.05">
+      <!-- axis="0 0 1": z軸まわりに回る。上から見て反時計回りが正の角度。 -->
+      <joint name="q1" axis="0 0 1" range="-3.14 3.14"/>
+      <!-- fromto: 始点から終点までのカプセル(丸い棒)。リンク1の長さ L1 = 0.2m。 -->
+      <geom type="capsule" fromto="0 0 0 0.2 0 0" size="0.01" mass="0.2" material="arm"/>
+
+      <!-- 肘: リンク1の先端(x=0.2)に関節2がある。子bodyの pos は親からの相対位置。 -->
+      <body name="link2" pos="0.2 0 0">
+        <joint name="q2" axis="0 0 1" range="-2.8 2.8"/>
+        <!-- リンク2の長さ L2 = 0.15m。 -->
+        <geom type="capsule" fromto="0 0 0 0.15 0 0" size="0.008" mass="0.1" material="arm"/>
+        <!-- site: 質量も形もない「目印の点」。先端(手先)の位置を読むために置く。
+             順運動学の結果は data.site("tip").xpos で取り出せる。 -->
+        <site name="tip" pos="0.15 0 0" size="0.012" rgba="1 0.8 0 1"/>
+      </body>
+    </body>
+
+    <!-- 逆運動学の「目標点」を示す印。mocap="true" は、物理計算とは無関係に
+         プログラムから位置を自由に置ける(動かせる)body にする設定。 -->
+    <body name="goal" pos="0.2 0.1 0.05" mocap="true">
+      <geom type="sphere" size="0.015" material="goal"/>
+    </body>
+  </worldbody>
+
+  <!-- 位置指令のモータ。ctrl[0]=q1 の目標角度、ctrl[1]=q2 の目標角度 [rad]。 -->
+  <actuator>
+    <position name="a_q1" joint="q1"/>
+    <position name="a_q2" joint="q2"/>
+  </actuator>
+</mujoco>
