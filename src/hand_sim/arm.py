@@ -13,10 +13,14 @@ L2 = 0.15
 
 
 def fk(q1, q2):
+    
     """順運動学: 関節角 (q1, q2) [rad] から、手先の位置を np.array([x, y]) [m] で返す。
 
     ヒント: 肘の位置 = 肩からリンク1の向き(角度 q1)へ L1 進んだ点。
             手先の位置 = 肘から、リンク2の向き(角度 q1+q2)へ L2 進んだ点。
     """
-    # TODO: ここを自分で書く。
+    x = L1 * np.cos(q1) + L2 * np.cos(q1 + q2)
+    y = L1 * np.sin(q1) + L2 * np.sin(q1 + q2)
+    return np.array([x, y])
     raise NotImplementedError("fk が未実装です")
+    
