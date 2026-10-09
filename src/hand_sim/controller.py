@@ -31,5 +31,12 @@ class PDController:
         振動し、発散する。<position> アクチュエータは kv を内部で安定に計算していたが、
         自分で計算するとこの問題が表に出る。ステップ応答の実験(kp, kv を変える)で確かめる点。
         """
-        # TODO: ここを自分で書く。
-        raise NotImplementedError("torque が未実装です")
+        q_target = np.asarray(q_target)
+        q = np.asarray(q)
+        qd = np.asarray(qd)
+        return self.kp * (q_target - q) - self.kv * qd
+        # 以下と同じ意味ではあるが、引数すべてが配列なのでこちらのほうが効率的
+        # torque1 = self.kp * (q_target[0] - q[0]) - self.kv * qd[0]
+        # torque2 = self.kp * (q_target[1] - q[1]) - self.kv * qd[1]
+        # return np.asarray([torque1, torque2]) 
+
