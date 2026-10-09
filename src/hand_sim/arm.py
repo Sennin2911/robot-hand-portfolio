@@ -23,4 +23,24 @@ def fk(q1, q2):
     y = L1 * np.sin(q1) + L2 * np.sin(q1 + q2)
     return np.array([x, y])
     raise NotImplementedError("fk が未実装です")
-    
+
+def ik(x, y):
+    d = np.sqrt(x**2 + y**2)
+    q1 = np.arccos((d**2 - L1 - L2) / 2 * L1 * L2)
+    q2 = np.atan2(y, x) - np.atan2(L2 * sin(q1), (L1 + L2 * cos(q2)))
+    return fk(q1, q2)
+    raise 
+
+def ik(x, y, elbow=+1):
+    """逆運動学: 手先の目標位置 (x, y) [m] から、関節角 (q1, q2) [rad] を返す。
+
+    解は2通りある(肘が反時計回りに曲がる / 時計回りに曲がる)。
+    elbow=+1 なら q2 >= 0 の解、elbow=-1 なら q2 <= 0 の解を返す。
+    届かない目標(遠すぎる / 近すぎる)のときは ValueError を出す。
+
+    ヒント: 肩・肘・手先の三角形(辺の長さ L1, L2, d=肩から目標までの距離)に
+            余弦定理を使うと cos(q2) が求まる。q1 は「目標の方向角」から
+            「肘が曲がったことで生じるずれの角」を引く。
+    """
+    # TODO: ここを自分で書く。
+    raise NotImplementedError("ik が未実装です")
