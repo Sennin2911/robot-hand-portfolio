@@ -15,7 +15,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 # 画面なしで描画するための設定。MUJOCO_GL=egl は「GPUで直接描画する方式」の指定。
 # setdefault: すでに設定済みなら上書きしない(ユーザーの指定を優先する)。
 # ★mujoco を import する前に設定する必要があるので、下の import より先に書く。
-os.environ.setdefault("MUJOCO_GL", "egl")
+# sys.platform: 実行中のOSの名前。Linux なら "linux"、Mac なら "darwin"、Windows なら "win32"。
+#   [頻度] OSごとに処理を変えたいときの定番。このプロジェクトでは、他のスクリプトも同じ形にしている。
+# if で Linux のときだけ設定する理由: EGL は Linux 用の仕組みで、Mac には無い。
+#   Mac で "egl" を指定すると描画に失敗するので、Mac では何も設定せず MuJoCo の標準に任せる。
+if sys.platform == "linux":
+    os.environ.setdefault("MUJOCO_GL", "egl")
 
 import mujoco  # noqa: E402  (import が途中にあっても警告を出さない印。上記の理由で順番を変えている)
 from hand_sim import HandEnv  # noqa: E402
@@ -28,7 +33,7 @@ env.step(env.data.ctrl, n_substeps=500)
 print(f"mujoco {mujoco.__version__}: nu={env.nu}, nbody={env.model.nbody}, step OK")
 try:  # try/except: 失敗するかもしれない処理を試し、失敗したときの処理を except に書く。
     img = env.render()
-    print(f"render OK (EGL): {img.shape}")  # .shape = 配列の形(高さ, 幅, 色の数)
+    print(f"render OK: {img.shape}")  # .shape = 配列の形(高さ, 幅, 色の数)
     env.close()
 except Exception as e:
     print(f"render FAILED: {e}")

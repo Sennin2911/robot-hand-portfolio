@@ -25,7 +25,45 @@ GUIで把持動作をリアルタイム再生 (ビューア):
 ```bash
 .venv/bin/python scripts/view_grasp.py
 ```
-ヘッドレス描画は `MUJOCO_GL=egl` (スクリプト側で設定済み)。GUI で見るなら `.venv/bin/python -m mujoco.viewer --mjcf=models/scene.xml`。
+ヘッドレス描画は `MUJOCO_GL=egl` (Linux のときだけスクリプト側で設定する。Mac では設定しない。詳しくは下の「Mac で動かす」)。GUI で見るなら `.venv/bin/python -m mujoco.viewer --mjcf=models/scene.xml`。
+
+## Mac で動かす
+Linux 以外でも、同じコードで動く作り(`MUJOCO_GL=egl` は Linux のときだけ設定する)。
+ただし作者は Mac で動作を確認していない。うまく動かないときは、下の「困ったとき」を見る。
+
+**1. 取得とセットアップ** (Python 3.10 以上が目安。`python3 --version` で確認)
+```bash
+git clone git@github.com:Sennin2911/robot-hand-portfolio.git
+cd robot-hand-portfolio
+python3 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+```
+- Linux の `.venv/` は Mac では使えない(`.venv/` は git に入っていないので、Mac で作り直すのが正しい)。
+- Mac の Python には `pip` が最初から付くので、`--without-pip` は不要で、`pip3 --python ...` の形も使わない。
+  上のように `.venv/bin/python -m pip install ...` と書けばよい。
+- Python が無いとき: `brew install python`(Homebrew を入れてある場合)か、python.org のインストーラを使う。
+
+**2. 動作確認** (画面なし。Linux と同じコマンド)
+```bash
+.venv/bin/python scripts/check_install.py    # 最後に "render OK" と出ればよい
+.venv/bin/python scripts/check_vision.py     # 第2週の答え合わせ。"全部OK" と出れば完成
+.venv/bin/python scripts/inspect_so101.py    # SO-101 の関節一覧 + outputs/so101_poses.png
+```
+
+**3. GUI(ビューア)で見る**: Mac では `python` ではなく **`mjpython`** で実行する必要がある
+(MuJoCo の仕様。macOS で `mujoco` を pip で入れると `.venv/bin/mjpython` も入るはず。この Linux には無いので未確認)。
+```bash
+.venv/bin/mjpython scripts/view_grasp.py
+.venv/bin/mjpython scripts/view_arm.py
+.venv/bin/mjpython -m mujoco.viewer --mjcf=models/so101/scene_vs.xml
+```
+
+**困ったとき**
+| 症状 | 試すこと |
+|---|---|
+| `render FAILED` や描画のエラー | 環境変数 `MUJOCO_GL` が設定されていないか確認(`echo $MUJOCO_GL`)。`egl` になっていたら `unset MUJOCO_GL` |
+| ビューアで `launch_passive` のエラー | `python` ではなく `mjpython` で実行しているか確認 |
+| `pip install` が失敗する | `python3 --version` が 3.10 以上か確認 |
 
 ## 構成
 - `models/scene.xml` — 床・2指ハンド(手のひら上下スライド+各指2関節)・把持対象(箱)・カメラ2台(`front`, `top`)

@@ -9,8 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # src フォルダを import の探索先に追加(詳しい意味は check_install.py を参照)。
 sys.path.insert(0, str(ROOT / "src"))
-# 画面なし描画の設定。mujoco を読み込む前に必要。
-os.environ.setdefault("MUJOCO_GL", "egl")
+# 画面なし描画の設定。mujoco を読み込む前に必要。Linux のときだけ設定する(理由は check_install.py を参照)。
+if sys.platform == "linux":
+    os.environ.setdefault("MUJOCO_GL", "egl")
 
 # imageio: 画像・動画の読み書きライブラリ。.v2 は従来からの使い方のバージョン。
 import imageio.v2 as imageio  # noqa: E402

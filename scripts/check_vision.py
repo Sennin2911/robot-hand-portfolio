@@ -11,8 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # src フォルダを import の探索先に追加(詳しい意味は check_install.py を参照)。
 sys.path.insert(0, str(ROOT / "src"))
-# ★mujoco を import する前に書く(理由は check_install.py を参照)。
-os.environ.setdefault("MUJOCO_GL", "egl")
+# ★mujoco を import する前に書く。Linux のときだけ設定する(どちらも理由は check_install.py を参照)。
+if sys.platform == "linux":
+    os.environ.setdefault("MUJOCO_GL", "egl")
 
 import mujoco  # noqa: E402
 import numpy as np  # noqa: E402

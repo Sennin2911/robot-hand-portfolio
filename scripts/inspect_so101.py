@@ -9,8 +9,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 # 他のスクリプトと同じ形(詳しい意味は check_install.py を参照)。
 sys.path.insert(0, str(ROOT / "src"))
-# 画面なしで描画する設定。★mujoco を import する前に書く必要がある(理由は check_install.py 参照)。
-os.environ.setdefault("MUJOCO_GL", "egl")
+# 画面なしで描画する設定。★mujoco を import する前に書く必要がある。Linux のときだけ設定する(どちらも理由は check_install.py 参照)。
+if sys.platform == "linux":
+    os.environ.setdefault("MUJOCO_GL", "egl")
 
 import imageio.v3 as iio  # noqa: E402  (画像ファイルの保存に使う。[頻度] 画像保存の定番)
 import mujoco  # noqa: E402
