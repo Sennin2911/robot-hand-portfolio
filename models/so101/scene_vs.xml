@@ -1,0 +1,37 @@
+<!-- 【概要】視覚サーボ用のシーン。SO-101 本体(so101_new_calib.xml、原本のまま)に、
+     床・照明・把持対象(赤い立方体)・真上から見下ろす固定カメラ「overhead」を足したもの。
+     単位は m(長さ)、rad(角度)。原点はアームの付け根。 -->
+<mujoco model="so101_visual_servo">
+  <!-- include: 別のXMLの中身をここに取り込む。SO-101 本体は原本を改変せず、足すものだけこのファイルに書く。 -->
+  <include file="so101_new_calib.xml"/>
+
+  <visual>
+    <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0"/>
+    <global offwidth="1280" offheight="720"/>
+  </visual>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="256" height="256" rgb1=".85 .85 .85" rgb2=".75 .75 .75"/>
+    <material name="grid" texture="grid" texrepeat="6 6" reflectance="0.1"/>
+    <material name="target" rgba="0.9 0.1 0.1 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" type="plane" size="0.6 0.6 0.05" material="grid"/>
+
+    <!-- 把持対象: 一辺 3cm の赤い立方体(size は「一辺の半分」)。
+         freejoint: 6自由度(位置3+回転3)で自由に動ける物体にする印。置いただけだと床に落ち着く。
+         pos の z=0.015 は、立方体の中心の高さ(=半辺)で、ちょうど床に接する。 -->
+    <body name="cube" pos="0.22 -0.12 0.015">
+      <freejoint name="cube_free"/>
+      <geom name="cube_geom" type="box" size="0.015 0.015 0.015" mass="0.02" material="target"/>
+    </body>
+
+    <!-- 固定カメラ: 床の上 0.6 m から真下を見る。
+         xyaxes: カメラの「画像の右方向(x)」と「画像の上方向(y)」を世界座標で指定する。
+           ここでは 右=世界+x、上=世界+y。カメラは自分の -z 方向(=世界の下向き)を見る。
+         fovy: 縦方向の視野角[度]。この値と画像サイズから、画素と実寸の対応(焦点距離)が決まる。 -->
+    <camera name="overhead" pos="0.2 0 0.6" xyaxes="1 0 0 0 1 0" fovy="45"/>
+  </worldbody>
+</mujoco>
