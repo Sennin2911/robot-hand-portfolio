@@ -17,3 +17,6 @@
 - Python 仮想環境は `.venv/` (pip なしで作成済み)。実行は `.venv/bin/python ...`。
 - パッケージ追加: `pip3 --python .venv/bin/python install <pkg>` し、`requirements.txt` にも追記する。
 - ヘッドレス描画は `MUJOCO_GL=egl`。
+
+## 作業の再開
+- 現在の進捗・次にやること・進め方は `docs/next_steps.md` を最初に読む。作業を進めたらこのファイルも更新する。
