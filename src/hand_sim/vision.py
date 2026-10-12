@@ -21,8 +21,17 @@ def find_red_centroid(img):
             True の位置を取り出す」「.mean() で平均」を組み合わせると短く書ける。
             赤い画素が1つも無いとき、平均を取ると nan になるので、先に個数を確認すること。
     """
-    raise NotImplementedError("find_red_centroid がまだ書かれていません")
+    r = img[:, :, 0]
+    g = img[:, :, 1]
+    b = img[:, :, 2]
 
+    mask = (r > 100) & (g < 0.4*r) & (b < 0.4*r)
+    if not mask.any():
+      return None
+    y, x = np.nonzero(mask)
+    u = (np.max(x) + np.min(x)) / 2
+    v = (np.max(y) + np.min(y)) / 2
+    return (u, v)
 
 def pixel_to_world(u, v, cam_pos, fovy_deg, width, height, z_obj):
     """真下を向いた固定カメラの画像上の位置 (u, v) [画素] を、世界座標の (x, y) [m] に直す。
@@ -40,4 +49,9 @@ def pixel_to_world(u, v, cam_pos, fovy_deg, width, height, z_obj):
          「 / f * depth」で実寸 [m] に直す。
       4. 画像の縦方向は v が下へ増えるが、世界の y は上へ増えるので、符号に注意。
     """
-    raise NotImplementedError("pixel_to_world がまだ書かれていません")
+    f = (height/2) / np.tan(np.radians(fovy_deg)/2)
+    depth = cam_pos[2] - z_obj
+    x = (u - width/2) / f * depth + cam_pos[0]
+    # v は下へ増える: 世界の y は上へ増える → 逆向きなので引く。
+    y = -(v - height/2) / f * depth + cam_pos[1]
+    return (x, y)
