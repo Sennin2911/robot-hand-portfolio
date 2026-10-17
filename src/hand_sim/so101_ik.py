@@ -40,11 +40,16 @@ def solve_ik(model, data, target, q_init, max_iter=200, tol=1e-4, damping=0.05, 
         mujoco.mj_jacSite(model, data, jacp, None, site_id)
         J = jacp[:, :N_ARM]
 
-        # TODO(ここがあなたの担当): 関節をどれだけ動かすか dq (長さ5) を求める。
-        #   減衰付き最小二乗法 (damped least squares):
-        #       dq = J^T (J J^T + λ² I)^-1 err        (λ = damping、I = 3×3 の単位行列)
-        #   ヒント: 転置は J.T、行列の積は @、逆行列を明示的に作るより np.linalg.solve(A, b) が定番。
-        dq = np.zeros(N_ARM)  # ← これを置き換える (今は「動かさない」ので、何も進まない)
+        # 関節をどれだけ動かすか dq (長さ5) を求める。減衰付き最小二乗法 (damped least squares):
+        #     dq = J^T (J J^T + λ² I)^-1 err        (λ = damping、I = 3×3 の単位行列)
+        # 単純に J の逆行列を使うと、腕が伸び切った姿勢(特異姿勢)で dq が巨大になって暴れる。
+        # λ² I を足すと、そういう姿勢でも dq が有限に収まる。[頻度] IK では定番の安全策。
+        #   J.T   : 転置(行と列の入れ替え)。[頻度] numpy で非常によく使う
+        #   @     : 行列の積。[頻度] numpy で定番(* は要素ごとの積で別物)
+        #   np.eye(3) : 3×3 の単位行列 I。[頻度] 線形代数でよく使う
+        #   np.linalg.solve(A, b) : A x = b の x を求める。逆行列を作って掛けるより正確で速いので定番。
+        A = J @ J.T + damping**2 * np.eye(3)  # 3×3
+        dq = J.T @ np.linalg.solve(A, err)  # (5×3) @ (3,) → 長さ5
 
         # 1回で大きく動きすぎると不安定になるので、最大の変化量を max_step に抑える。
         biggest = np.max(np.abs(dq))

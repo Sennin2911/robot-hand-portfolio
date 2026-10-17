@@ -3,18 +3,20 @@
 別のPC(Mac など)や、新しい Claude Code のセッションから作業を再開するための引き継ぎメモ。
 **作業を進めたら、この文書も更新する**(日付を付けて、実態とずれた記述を残さない)。
 
-最終更新: 2026-10-15
+最終更新: 2026-10-18
 
 ## 目的
 「カメラで対象を捉え、sim で検証した制御を、実機(SO-101 + STS3215 サーボ)に移す」ポートフォリオ。
 流れは、第1週=sim と制御の土台 → 第2週=sim で視覚サーボ → 第3週=実機に移植 → 第4週=sim と実機の差(ギャップ)を計測。
 
 ## 進め方(重要)
-作者は MuJoCo も Python も初心者。**骨組みと答え合わせ用のスクリプトを用意し、核心の部分は作者が自分で書く**進め方にしている。
+作者は MuJoCo も Python も初心者。ただし 2026-10-18 に方針を変更した:
+**コードは Claude が実装する(コメントは CLAUDE.md のルールで丁寧に残す)。作者は制御の考え方を理解することに集中する。**
+(理由: 制御の概要は分かっており、実装を自分で書くこと自体の学習価値は低いと作者が判断したため。)
 
-- 新しい課題は、(1)説明の md(`docs/`)、(2)TODO 付きの骨組み、(3)`scripts/check_*.py` の3点セットで渡す。
-  渡す前に、正解の式を一時的に差し込んで、答え合わせ側が正しいことを確かめる。
-- 間違いを説明するときは、実行結果のどの出力が、どの行から来たかを対応づける。
+- 新しい課題は、(1)説明の md(`docs/`)、(2)実装、(3)`scripts/check_*.py` の答え合わせ、の形で進める。
+  実装後は check を実行して結果を報告し、考え方・数値の意味は説明で補う。
+- 結果を説明するときは、実行結果のどの出力が、どの行から来たかを対応づける。
 - コードのコメントは `CLAUDE.md` のルールに従う(日本語、初心者が知らない記法の意味と使用頻度を書く)。
 - コミットは小さく頻繁に。push は依頼があったときだけ。
 
@@ -26,7 +28,7 @@
 | 第1週 | SO-101 の MuJoCo モデルの取り込み(公式 `TheRobotStudio/SO-ARM100` の `Simulation/SO101/`) | `models/so101/`(出典・ライセンスは `models/so101/README.md`)、`scripts/inspect_so101.py` |
 | 第2週 | 視覚サーボ用のシーン(俯瞰カメラ `overhead` + 赤い立方体) | `models/so101/scene_vs.xml` |
 | 第2週 | **色検出(`find_red_centroid`)と画素→世界座標(`pixel_to_world`)** | `src/hand_sim/vision.py`、解説 `docs/vision_basics.md`、答え合わせ `scripts/check_vision.py`(全OK) |
-| 第2週 | **SO-101 の数値IK の骨組みと答え合わせを用意**(核心の1行 `dq = ...` は作者が書く。進行中) | `src/hand_sim/so101_ik.py`、解説 `docs/numerical_ik.md`、`scripts/check_so101_ik.py` |
+| 第2週 | **SO-101 の数値IK**(核心の `dq = ...` は Claude が実装。`check_so101_ik.py` 全OK) | `src/hand_sim/so101_ik.py`、解説 `docs/numerical_ik.md`、`scripts/check_so101_ik.py` |
 
 SO-101 の要点: 6関節(`shoulder_pan`, `shoulder_lift`, `elbow_flex`, `wrist_flex`, `wrist_roll`, `gripper`)、
 `<position>` アクチュエータ(kp=998、kv=2.73、最大トルク 3.35 N·m)。
@@ -35,9 +37,7 @@ SO-101 の要点: 6関節(`shoulder_pan`, `shoulder_lift`, `elbow_flex`, `wrist_
 ## 次にやること(第2週の続き)
 順番は目安。各項目は、上の3点セットの形で進める想定。
 
-1. **SO-101 の逆運動学(IK)。【骨組み用意済み。`so101_ik.py` の TODO を作者が書く】** 今の IK は2リンク平面用。SO-101 は5自由度の3次元アームで、解析的には解きにくい。
-   数値 IK(ヤコビアンを使った反復計算。MuJoCo の `mj_jacSite` で手先の位置のヤコビアンが取れる)が一般的。
-   手先の目印は、モデル内の site `gripperframe`。**第1週からの一番大きな壁になりそう。**
+1. ~~SO-101 の逆運動学(IK)~~ **完了。** `so101_ik.py` の `solve_ik`(ヤコビアン+減衰付き最小二乗法)。
 2. **視覚サーボを1周つなぐ。** `overhead` カメラで撮影 → `find_red_centroid` → `pixel_to_world` → IK → `ctrl` に渡す。
    立方体の上にグリッパを持っていけるかを、sim で確かめる。
 3. **ハンドアイ・キャリブレーションの考え方を sim で通す。** 今の `pixel_to_world` は「カメラの位置と向きが分かっている」前提。
