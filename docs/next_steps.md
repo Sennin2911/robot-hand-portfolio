@@ -28,6 +28,7 @@
 | 第1週 | SO-101 の MuJoCo モデルの取り込み(公式 `TheRobotStudio/SO-ARM100` の `Simulation/SO101/`) | `models/so101/`(出典・ライセンスは `models/so101/README.md`)、`scripts/inspect_so101.py` |
 | 第2週 | 視覚サーボ用のシーン(俯瞰カメラ `overhead` + 赤い立方体) | `models/so101/scene_vs.xml` |
 | 第2週 | **色検出(`find_red_centroid`)と画素→世界座標(`pixel_to_world`)** | `src/hand_sim/vision.py`、解説 `docs/vision_basics.md`、答え合わせ `scripts/check_vision.py`(全OK) |
+| 第2週 | **視覚サーボ1周(open-loop)** | `src/hand_sim/visual_servo.py`、`scripts/check_visual_servo.py` |
 | 第2週 | **SO-101 の数値IK**(核心の `dq = ...` は Claude が実装。`check_so101_ik.py` 全OK) | `src/hand_sim/so101_ik.py`、解説 `docs/numerical_ik.md`、`scripts/check_so101_ik.py` |
 
 SO-101 の要点: 6関節(`shoulder_pan`, `shoulder_lift`, `elbow_flex`, `wrist_flex`, `wrist_roll`, `gripper`)、
@@ -38,8 +39,9 @@ SO-101 の要点: 6関節(`shoulder_pan`, `shoulder_lift`, `elbow_flex`, `wrist_
 順番は目安。各項目は、上の3点セットの形で進める想定。
 
 1. ~~SO-101 の逆運動学(IK)~~ **完了。** `so101_ik.py` の `solve_ik`(ヤコビアン+減衰付き最小二乗法)。
-2. **視覚サーボを1周つなぐ。** `overhead` カメラで撮影 → `find_red_centroid` → `pixel_to_world` → IK → `ctrl` に渡す。
-   立方体の上にグリッパを持っていけるかを、sim で確かめる。
+2. ~~視覚サーボを1周つなぐ~~ **完了(open-loop)。** `src/hand_sim/visual_servo.py`、答え合わせ `scripts/check_visual_servo.py`(全OK、水平ずれ 0.4〜1.4mm)。
+   撮影 → 色検出 → 世界座標 → IK → `ctrl` を1回通す方式。手先は立方体の真上 10cm で止める(掴むところまでは未実装)。
+   残る課題: 動いた後に撮り直して補正する closed-loop 化、降下して掴む動作、アームが視界を遮る場合の扱い。
 3. **ハンドアイ・キャリブレーションの考え方を sim で通す。** 今の `pixel_to_world` は「カメラの位置と向きが分かっている」前提。
    実機では、その位置関係を測って求める必要がある。固定カメラ(eye-to-hand)にするか、手首のカメラ(eye-in-hand)にするかは**未決定**。
 4. 検出を、色の閾値から既製の物体検出モデルに差し替えられる形に保つ(「画像 → 位置」の形を変えない)。
