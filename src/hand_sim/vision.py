@@ -55,3 +55,20 @@ def pixel_to_world(u, v, cam_pos, fovy_deg, width, height, z_obj):
     # v は下へ増える: 世界の y は上へ増える → 逆向きなので引く。
     y = -(v - height/2) / f * depth + cam_pos[1]
     return (x, y)
+
+
+def find_blue_centroid(img):
+    """画像 img から青い画素を探し、その重心 (u, v) [画素] を返す。無ければ None を返す。
+
+    find_red_centroid の青版。視覚サーボ(closed-loop)で、手先に付けた青い目印を見つけるのに使う。
+    R, B の役割を入れ替えただけ(B が大きく、R と G がそれより十分小さい画素を選ぶ)。
+    アームの黄色・黒、赤い立方体は、この条件では選ばれない。
+    """
+    r = img[:, :, 0]
+    g = img[:, :, 1]
+    b = img[:, :, 2]
+    mask = (b > 100) & (r < 0.4 * b) & (g < 0.4 * b)
+    if not mask.any():
+        return None
+    v_idx, u_idx = np.nonzero(mask)  # 行(縦 v)の番号と列(横 u)の番号。img[v, u] の順に注意
+    return ((u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2)
