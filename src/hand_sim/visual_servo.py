@@ -19,10 +19,18 @@ def locate_cube(model, data, renderer, camera="overhead"):
     """
     renderer.update_scene(data, camera=camera)
     img = renderer.render()
+    # find_red_centroid(vision.py): 画像から「赤い画素」だけを選び、その範囲の中心の画素位置 (u, v) を返す。
+    #   u = 横(左端0、右へ増える)、v = 縦(上端0、下へ増える)。単位は画素。赤が1つも無ければ None。
     uv = find_red_centroid(img)
     if uv is None:
         return None
     cam = model.camera(camera)
+    # pixel_to_world(vision.py) の引数の意味(画素 → 世界座標 (x, y) [m] に直す):
+    #   uv[0], uv[1]        : 赤い物体の画像上の位置 u, v [画素]。上の find_red_centroid の結果。
+    #   cam.pos             : カメラの世界座標 (x, y, z) [m]。XML の <camera pos=...> の値。
+    #   model.cam_fovy[...] : カメラの縦方向の視野角 [度]。画素と実寸の対応(焦点距離)を決める。
+    #   renderer.width/height : 画像の幅・高さ [画素]。画像の中心(= カメラの真下)を求めるのに使う。
+    #   CUBE_TOP_Z          : 物体の見えている面の高さ [m]。カメラからこの面までの距離が「奥行き」になる。
     return pixel_to_world(uv[0], uv[1], cam.pos, model.cam_fovy[cam.id], renderer.width, renderer.height, CUBE_TOP_Z)
 
 
@@ -42,6 +50,15 @@ def move_arm(model, data, q, seconds=3.0):
     <position> アクチュエータなので、ctrl に角度 [rad] を入れるだけで内部で PD 制御して追従する。
     gripper(ctrl の6番目)は今回は動かさないので、今の値のままにする。
     """
+    # ctrl(目標角度)は、ここで1回入れたら、ループの間ずっと同じ値。ステップごとに変えてはいない。
+    # 一方、実際の関節角(data.qpos)はステップごとに変わる。アクチュエータが毎ステップ
+    #   力 = kp*(ctrl - 今の角度) - kv*速度
+    # を計算して関節を押すので、目標に向かって少しずつ近づいていく(PD制御)。
+    # ヤコビアンを使うのは solve_ik の中(動かす前の計画)。「手先を目標に届かせる最終的な関節角 q」を
+    # 探すために、仮の姿勢で何度も J を計算し直している。つまり役割は
+    #   ヤコビアン(IK): 目標の手先位置 → 到達したい関節角 q を決める
+    #   ctrl + mj_step : その q へ、実際に関節を動かす
+    # ステップごとに ctrl を変えるのは、「動かしながら撮り直して、そのたびに IK をやり直す」closed-loop の場合。
     data.ctrl[:N_ARM] = q
     for _ in range(int(seconds / model.opt.timestep)):  # model.opt.timestep: 1ステップの時間 [秒]
         mujoco.mj_step(model, data)
