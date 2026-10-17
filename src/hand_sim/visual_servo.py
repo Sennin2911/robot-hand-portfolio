@@ -13,7 +13,7 @@ from hand_sim.vision import find_blue_centroid, find_red_centroid, pixel_to_worl
 CUBE_TOP_Z = 0.03  # 立方体の上面の高さ [m]。カメラは上面を見ているので、奥行きの計算にこれを使う。
 
 
-def _locate(model, data, renderer, finder, z_obj, camera, cam_pos):
+def _locate(model, data, renderer, finder, z_obj, camera, cam_pos, fovy_deg=None):
     """撮影 → finder で画素位置 → 世界座標 (x, y) [m]。locate_cube / locate_marker の共通部分。
 
     finder  : 画像から (u, v) を返す関数(find_red_centroid か find_blue_centroid)。
@@ -21,6 +21,7 @@ def _locate(model, data, renderer, finder, z_obj, camera, cam_pos):
     cam_pos : 「プログラムが信じているカメラの位置」(x, y, z) [m]。None なら XML の本当の値を使う。
               実機ではカメラの位置を測って求めるので、ずれる。わざとずらした値を渡して、そのずれに
               どれだけ耐えられるかを試すために引数にしてある。
+    fovy_deg: 同じく「プログラムが信じている視野角」[度]。None なら XML の本当の値。較正(calibration.py)の結果を渡せる。
     """
     renderer.update_scene(data, camera=camera)
     img = renderer.render()
@@ -32,21 +33,23 @@ def _locate(model, data, renderer, finder, z_obj, camera, cam_pos):
     cam = model.camera(camera)
     if cam_pos is None:
         cam_pos = cam.pos
+    if fovy_deg is None:
+        fovy_deg = model.cam_fovy[cam.id]
     # pixel_to_world(vision.py) の引数の意味(画素 → 世界座標 (x, y) [m] に直す):
     #   uv[0], uv[1]        : 物体の画像上の位置 u, v [画素]。上の finder の結果。
     #   cam_pos             : カメラの世界座標 (x, y, z) [m]。XML の <camera pos=...> の値。
-    #   model.cam_fovy[...] : カメラの縦方向の視野角 [度]。画素と実寸の対応(焦点距離)を決める。
+    #   fovy_deg            : カメラの縦方向の視野角 [度]。画素と実寸の対応(焦点距離)を決める。
     #   renderer.width/height : 画像の幅・高さ [画素]。画像の中心(= カメラの真下)を求めるのに使う。
     #   z_obj               : 物体の見えている面の高さ [m]。カメラからこの面までの距離が「奥行き」になる。
-    return pixel_to_world(uv[0], uv[1], cam_pos, model.cam_fovy[cam.id], renderer.width, renderer.height, z_obj)
+    return pixel_to_world(uv[0], uv[1], cam_pos, fovy_deg, renderer.width, renderer.height, z_obj)
 
 
-def locate_cube(model, data, renderer, camera="overhead", cam_pos=None):
+def locate_cube(model, data, renderer, camera="overhead", cam_pos=None, fovy_deg=None):
     """カメラで撮影し、赤い立方体の世界座標 (x, y) [m] を返す。見つからなければ None。
 
     renderer : mujoco.Renderer。画像の幅・高さは renderer.width / renderer.height から分かる。
     """
-    return _locate(model, data, renderer, find_red_centroid, CUBE_TOP_Z, camera, cam_pos)
+    return _locate(model, data, renderer, find_red_centroid, CUBE_TOP_Z, camera, cam_pos, fovy_deg)
 
 
 def locate_marker(model, data, renderer, z_obj, camera="overhead", cam_pos=None):
@@ -139,6 +142,34 @@ def move_arm(model, data, q, seconds=3.0):
 def gripper_position(model, data):
     """手先(site gripperframe)の今の世界座標 (x, y, z) [m]。"""
     return data.site_xpos[model.site("gripperframe").id].copy()  # .copy(): 後で data が変わっても値が変わらないように
+
+
+def collect_calibration_samples(model, data, renderer, targets, q_init, camera="overhead"):
+    """手先を targets (各 (x, y, z) [m]) に動かして目印を撮影し、較正用のデータを集める。
+
+    戻り値: (points, pixels)
+      points : 目印の世界座標 (N×3)。関節角から計算した値(順運動学)。カメラの位置には依存しない。
+      pixels : 同じ目印の画像上の位置 (N×2) [画素]。
+    目印が見つからなかった・IK が届かなかった点は飛ばす。
+    腕は physics で動かさず、qpos を直接書いて姿勢を作る(較正に必要なのは、姿勢が分かることだけ。
+    実機なら、サーボを動かして、エンコーダで姿勢を読む)。
+    """
+    points, pixels = [], []
+    q = np.array(q_init, dtype=float)
+    for t in targets:
+        q, ok = plan_hover(model, (t[0], t[1]), t[2], q)
+        if not ok:
+            continue
+        data.qpos[:N_ARM] = q
+        mujoco.mj_forward(model, data)
+        renderer.update_scene(data, camera=camera)
+        uv = find_blue_centroid(renderer.render())
+        if uv is None:
+            continue
+        _, marker = forward_sites(model, q)
+        points.append(marker)
+        pixels.append(uv)
+    return np.array(points), np.array(pixels)
 
 
 def servo_closed_loop(model, data, renderer, hover_z, cam_pos=None, gain=0.8, max_iter=15, settle=0.5, tol=0.002,
