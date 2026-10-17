@@ -1,5 +1,5 @@
 """【概要】視覚サーボを1周つなぐ(第2週-4)。
-  overhead カメラで撮影 → find_red_centroid → pixel_to_world → solve_ik → ctrl に渡して腕を動かす。
+  overhead カメラで撮影 → 検出器(既定は色検出 find_red_centroid)→ pixel_to_world → solve_ik → ctrl に渡して腕を動かす。
 vision.py(目)と so101_ik.py(関節角の計算)を、1本の流れにつなぐだけのファイル。
 open-loop: 画像で位置を測って1回だけ動く(locate_cube → plan_hover → move_arm を1回ずつ呼ぶ)。
 closed-loop: 動いたあとに撮り直し、「立方体」と「手先の青い目印」のずれを見て、ずれが縮むまで繰り返す(servo_closed_loop)。
@@ -13,10 +13,11 @@ from hand_sim.vision import find_blue_centroid, find_red_centroid, pixel_to_worl
 CUBE_TOP_Z = 0.03  # 立方体の上面の高さ [m]。カメラは上面を見ているので、奥行きの計算にこれを使う。
 
 
-def _locate(model, data, renderer, finder, z_obj, camera, cam_pos, fovy_deg=None):
-    """撮影 → finder で画素位置 → 世界座標 (x, y) [m]。locate_cube / locate_marker の共通部分。
+def _locate(model, data, renderer, detector, z_obj, camera, cam_pos, fovy_deg=None):
+    """撮影 → detector で画素位置 → 世界座標 (x, y) [m]。locate_cube / locate_marker の共通部分。
 
-    finder  : 画像から (u, v) を返す関数(find_red_centroid か find_blue_centroid)。
+    detector: 画像から (u, v) を返す関数(vision.py の「検出器の約束」: detector(img) -> (u, v) または None)。
+              色で探す関数でも、物体検出モデルを包んだ関数でも、この形なら差し替えられる。
     z_obj   : 見つけた物体の(見えている面の)高さ [m]。奥行きの計算に使う。
     cam_pos : 「プログラムが信じているカメラの位置」(x, y, z) [m]。None なら XML の本当の値を使う。
               実機ではカメラの位置を測って求めるので、ずれる。わざとずらした値を渡して、そのずれに
@@ -25,9 +26,9 @@ def _locate(model, data, renderer, finder, z_obj, camera, cam_pos, fovy_deg=None
     """
     renderer.update_scene(data, camera=camera)
     img = renderer.render()
-    # finder(vision.py): 画像から目的の色の画素だけを選び、その範囲の中心の画素位置 (u, v) を返す。
+    # detector: 画像から物体の中心の画素位置 (u, v) を返す。
     #   u = 横(左端0、右へ増える)、v = 縦(上端0、下へ増える)。単位は画素。見つからなければ None。
-    uv = finder(img)
+    uv = detector(img)
     if uv is None:
         return None
     cam = model.camera(camera)
@@ -36,7 +37,7 @@ def _locate(model, data, renderer, finder, z_obj, camera, cam_pos, fovy_deg=None
     if fovy_deg is None:
         fovy_deg = model.cam_fovy[cam.id]
     # pixel_to_world(vision.py) の引数の意味(画素 → 世界座標 (x, y) [m] に直す):
-    #   uv[0], uv[1]        : 物体の画像上の位置 u, v [画素]。上の finder の結果。
+    #   uv[0], uv[1]        : 物体の画像上の位置 u, v [画素]。上の detector の結果。
     #   cam_pos             : カメラの世界座標 (x, y, z) [m]。XML の <camera pos=...> の値。
     #   fovy_deg            : カメラの縦方向の視野角 [度]。画素と実寸の対応(焦点距離)を決める。
     #   renderer.width/height : 画像の幅・高さ [画素]。画像の中心(= カメラの真下)を求めるのに使う。
@@ -44,20 +45,22 @@ def _locate(model, data, renderer, finder, z_obj, camera, cam_pos, fovy_deg=None
     return pixel_to_world(uv[0], uv[1], cam_pos, fovy_deg, renderer.width, renderer.height, z_obj)
 
 
-def locate_cube(model, data, renderer, camera="overhead", cam_pos=None, fovy_deg=None):
+def locate_cube(model, data, renderer, camera="overhead", cam_pos=None, fovy_deg=None, detector=find_red_centroid):
     """カメラで撮影し、赤い立方体の世界座標 (x, y) [m] を返す。見つからなければ None。
 
     renderer : mujoco.Renderer。画像の幅・高さは renderer.width / renderer.height から分かる。
+    detector : 立方体を見つける検出器。既定は色で探す find_red_centroid。差し替え可(vision.py 冒頭を参照)。
     """
-    return _locate(model, data, renderer, find_red_centroid, CUBE_TOP_Z, camera, cam_pos, fovy_deg)
+    return _locate(model, data, renderer, detector, CUBE_TOP_Z, camera, cam_pos, fovy_deg)
 
 
-def locate_marker(model, data, renderer, z_obj, camera="overhead", cam_pos=None):
+def locate_marker(model, data, renderer, z_obj, camera="overhead", cam_pos=None, fovy_deg=None, detector=find_blue_centroid):
     """カメラで撮影し、手先の青い目印の世界座標 (x, y) [m] を返す。見つからなければ None。
 
-    z_obj : 目印の今の高さ [m]。関節角から計算できる(forward_tip)ので、呼ぶ側が渡す。
+    z_obj : 目印の今の高さ [m]。関節角から計算できる(forward_sites)ので、呼ぶ側が渡す。
+    detector : 目印を見つける検出器。既定は色で探す find_blue_centroid。
     """
-    return _locate(model, data, renderer, find_blue_centroid, z_obj, camera, cam_pos)
+    return _locate(model, data, renderer, detector, z_obj, camera, cam_pos, fovy_deg)
 
 
 # 青い目印を付ける位置(gripper リンクの座標系 [m])。
@@ -144,7 +147,7 @@ def gripper_position(model, data):
     return data.site_xpos[model.site("gripperframe").id].copy()  # .copy(): 後で data が変わっても値が変わらないように
 
 
-def collect_calibration_samples(model, data, renderer, targets, q_init, camera="overhead"):
+def collect_calibration_samples(model, data, renderer, targets, q_init, camera="overhead", detector=find_blue_centroid):
     """手先を targets (各 (x, y, z) [m]) に動かして目印を撮影し、較正用のデータを集める。
 
     戻り値: (points, pixels)
@@ -163,7 +166,7 @@ def collect_calibration_samples(model, data, renderer, targets, q_init, camera="
         data.qpos[:N_ARM] = q
         mujoco.mj_forward(model, data)
         renderer.update_scene(data, camera=camera)
-        uv = find_blue_centroid(renderer.render())
+        uv = detector(renderer.render())
         if uv is None:
             continue
         _, marker = forward_sites(model, q)
@@ -173,7 +176,8 @@ def collect_calibration_samples(model, data, renderer, targets, q_init, camera="
 
 
 def servo_closed_loop(model, data, renderer, hover_z, cam_pos=None, gain=0.8, max_iter=15, settle=0.5, tol=0.002,
-                      first_move=3.0, on_step=None):
+                      first_move=3.0, on_step=None, fovy_deg=None, cube_detector=find_red_centroid,
+                      marker_detector=find_blue_centroid):
     """closed-loop の視覚サーボ。立方体の真上 hover_z [m] に、撮り直しながら手先を合わせていく。
 
     毎回の手順:
@@ -187,6 +191,8 @@ def servo_closed_loop(model, data, renderer, hover_z, cam_pos=None, gain=0.8, ma
     乗り、引き算(c - m)でほぼ打ち消される。open-loop は c だけを信じるので、ずれがそのまま残る。
     gain: 1回で埋めるずれの割合。1 だと測定誤差も全部拾って揺れるので、1 未満にして慎重に近づく。
 
+    fovy_deg: 「信じている視野角」[度](cam_pos と同じ考え方。None なら本当の値)。
+    cube_detector, marker_detector: 立方体・目印の検出器(差し替え可)。
     on_step: 関数を渡すと、腕を動かすたびに on_step(回数, IKの反復ごとの距離のリスト) を呼ぶ(様子を記録する用)。
 
     戻り値: 各回のずれの大きさ [m] のリスト(最後は動かした後の測定値)。
@@ -195,7 +201,7 @@ def servo_closed_loop(model, data, renderer, hover_z, cam_pos=None, gain=0.8, ma
     # 立方体は、腕が視界に入る前(最初)に1回だけ測る。腕が近づくと、グリッパの陰で立方体が部分的に隠れ、
     # 毎回の測定が 5mm ほど揺れて、目標が往復して収束しなかったため。立方体は動かない前提の割り切り
     # (動く物体を追う場合は、隠れても位置が崩れない検出方法が別途必要になる)。
-    cube_xy = locate_cube(model, data, renderer, cam_pos=cam_pos)
+    cube_xy = locate_cube(model, data, renderer, cam_pos=cam_pos, fovy_deg=fovy_deg, detector=cube_detector)
     if cube_xy is None:
         return history
     target_xy = np.array(cube_xy)  # 最初は open-loop と同じ: 立方体の推定位置を目標にする
@@ -208,7 +214,8 @@ def servo_closed_loop(model, data, renderer, hover_z, cam_pos=None, gain=0.8, ma
             on_step(i, ik_hist)
         # 手先と目印の位置関係は、いまの関節角から計算できる(実機ならエンコーダの値から。カメラは使わない)。
         tip_fk, marker_fk = forward_sites(model, data.qpos[:N_ARM])
-        marker_xy = locate_marker(model, data, renderer, marker_fk[2], cam_pos=cam_pos)  # 目印の高さで奥行きを計算
+        marker_xy = locate_marker(model, data, renderer, marker_fk[2], cam_pos=cam_pos, fovy_deg=fovy_deg,
+                                  detector=marker_detector)  # 目印の高さで奥行きを計算
         if marker_xy is None:
             break  # 目印が隠れて見えない。無理に動かさず、そこで止める
         # 目印は手先からずれた位置にあるので、「画像で測った目印の位置」に、手先と目印の差を足して、

@@ -1,5 +1,12 @@
 """【概要】カメラ画像から「赤い物体がどこにあるか」を求める(視覚サーボの"目"の部分)。
 
+【検出器の約束(差し替えの単位)】 この関数の形を守れば、中身は何でも差し替えられる:
+    detector(img) -> (u, v) または None
+      img : 高さ × 幅 × 3 (RGB, uint8) の画像。  (u, v) : 物体の中心の画素位置。見つからなければ None。
+制御側(visual_servo.py)は、この形だけを知っていて、色で探すのか、物体検出モデルで探すのかを知らない。
+既製の物体検出モデル(YOLO など)は「枠 (x0, y0, x1, y1)」を返すことが多いので、bbox_to_center で
+(u, v) に直して包めばよい。差し替え方の例は scripts/check_detectors.py。
+
 流れ:  カメラ画像 --find_red_centroid--> 画像上の位置 (u, v) [画素]
                   --pixel_to_world-->   世界座標の位置 (x, y) [m]
 この位置を、制御側(IK など)の目標として渡すのが第2週の目標。
@@ -7,6 +14,7 @@
  同じ「画像 → 位置」の形に保っておけば、後で検出モデルに差し替えても制御側は変えずに済む。)
 """
 import numpy as np
+from scipy import ndimage  # 画像処理の道具箱。ここでは「つながった塊に番号を振る」ために使う。[頻度] 画像処理で定番
 
 
 def find_red_centroid(img):
@@ -72,3 +80,45 @@ def find_blue_centroid(img):
         return None
     v_idx, u_idx = np.nonzero(mask)  # 行(縦 v)の番号と列(横 u)の番号。img[v, u] の順に注意
     return ((u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2)
+
+
+# ---- 差し替え用の検出器の例 ----
+
+def _largest_blob_centroid(mask):
+    """True/False の配列 mask の中で、一番大きな「つながった塊」の重心 (u, v) を返す。無ければ None。
+
+    scipy.ndimage.label: つながった True の塊ごとに 1, 2, 3 … と番号を振る(背景は 0)。[頻度] 塊を数えるときの定番
+    find_*_centroid は「赤い画素すべて」の範囲の中心を取るので、遠くに赤い点が1つ混ざるだけで、中心が大きくずれる。
+    こちらは一番大きい塊だけを使うので、小さなごみ(ノイズ、別の小さな物体)に強い。
+    """
+    labels, n = ndimage.label(mask)
+    if n == 0:
+        return None
+    sizes = ndimage.sum(mask, labels, index=range(1, n + 1))  # 塊ごとの画素数
+    best = int(np.argmax(sizes)) + 1  # 一番大きい塊の番号(argmax は 0 始まりなので +1)
+    v_idx, u_idx = np.nonzero(labels == best)
+    return ((u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2)
+
+
+def find_red_blob_centroid(img):
+    """赤い画素のうち、一番大きな塊の中心 (u, v) を返す。find_red_centroid の「ごみに強い」版。"""
+    r, g, b = img[:, :, 0], img[:, :, 1], img[:, :, 2]
+    return _largest_blob_centroid((r > 100) & (g < 0.4 * r) & (b < 0.4 * r))
+
+
+def find_blue_blob_centroid(img):
+    """青い画素のうち、一番大きな塊の中心 (u, v) を返す。find_blue_centroid の「ごみに強い」版。"""
+    r, g, b = img[:, :, 0], img[:, :, 1], img[:, :, 2]
+    return _largest_blob_centroid((b > 100) & (r < 0.4 * b) & (g < 0.4 * b))
+
+
+def bbox_to_center(bbox):
+    """物体検出モデルが返す枠 (x0, y0, x1, y1) [画素] を、中心 (u, v) に直す。枠が None なら None を返す。
+
+    YOLO など既製のモデルの出力は、この形の枠であることが多い。モデルの呼び出しを、
+    「画像 → 枠」の関数として書き、bbox_to_center で包めば、検出器の約束 detector(img) -> (u, v) を満たす。
+    """
+    if bbox is None:
+        return None
+    x0, y0, x1, y1 = bbox
+    return ((x0 + x1) / 2, (y0 + y1) / 2)
