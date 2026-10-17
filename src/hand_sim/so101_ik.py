@@ -10,7 +10,7 @@ import numpy as np
 N_ARM = 5  # IK で動かす関節の数 (shoulder_pan 〜 wrist_roll)。gripper(6番目)は手先の位置に影響しないので除く。
 
 
-def solve_ik(model, data, target, q_init, max_iter=200, tol=1e-4, damping=0.05, max_step=0.2):
+def solve_ik(model, data, target, q_init, max_iter=200, tol=1e-4, damping=0.05, max_step=0.2, history=None):
     """手先を target [m] に届かせる関節角 (長さ5) を求める。
 
     model, data : MuJoCo の model / data。data の中身(qpos)は、この関数の中で書き換わる。
@@ -19,6 +19,7 @@ def solve_ik(model, data, target, q_init, max_iter=200, tol=1e-4, damping=0.05, 
     tol         : 手先と目標の距離がこれ未満になったら成功 [m]。
     damping     : 減衰(λ)。特異姿勢で暴れないための安全弁。大きいほど慎重(遅い)。
     max_step    : 1回の更新で関節を動かす最大量 [rad]。
+    history     : リストを渡すと、反復ごとの「手先と目標の距離」[m] を追記する(収束の様子を見る用)。None なら記録しない。
 
     戻り値: (q, ok)  q = 求めた関節角(長さ5、関節の可動域内)、ok = tol 以内に届いたか(True/False)。
     """
@@ -32,6 +33,8 @@ def solve_ik(model, data, target, q_init, max_iter=200, tol=1e-4, damping=0.05, 
         data.qpos[:N_ARM] = q
         mujoco.mj_forward(model, data)  # qpos から手先の位置などを計算し直す(順運動学)
         err = np.asarray(target) - data.site_xpos[site_id]  # 手先から目標へ向かうベクトル [m]
+        if history is not None:
+            history.append(float(np.linalg.norm(err)))
         if np.linalg.norm(err) < tol:
             return q, True
 

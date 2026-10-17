@@ -84,14 +84,14 @@ def load_model_with_marker(xml_path, radius=0.012):
     return spec.compile()
 
 
-def plan_hover(model, xy, hover_z, q_init):
+def plan_hover(model, xy, hover_z, q_init, history=None):
     """立方体の (x, y) の真上 hover_z [m] に手先を持っていく関節角 (長さ5) を IK で求める。
 
     戻り値: (q, ok)。solve_ik は渡された data の qpos を書き換えるので、動かしている本体の data を
     汚さないよう、この関数の中で計算専用の data を新しく作って使う。[頻度] 「計算用の作業コピー」は定番
     """
     scratch = mujoco.MjData(model)
-    return solve_ik(model, scratch, [xy[0], xy[1], hover_z], q_init)
+    return solve_ik(model, scratch, [xy[0], xy[1], hover_z], q_init, history=history)  # history: solve_ik の記録用リスト(任意)
 
 
 def forward_sites(model, q):
@@ -142,7 +142,7 @@ def gripper_position(model, data):
 
 
 def servo_closed_loop(model, data, renderer, hover_z, cam_pos=None, gain=0.8, max_iter=15, settle=0.5, tol=0.002,
-                      first_move=3.0):
+                      first_move=3.0, on_step=None):
     """closed-loop の視覚サーボ。立方体の真上 hover_z [m] に、撮り直しながら手先を合わせていく。
 
     毎回の手順:
@@ -156,6 +156,8 @@ def servo_closed_loop(model, data, renderer, hover_z, cam_pos=None, gain=0.8, ma
     乗り、引き算(c - m)でほぼ打ち消される。open-loop は c だけを信じるので、ずれがそのまま残る。
     gain: 1回で埋めるずれの割合。1 だと測定誤差も全部拾って揺れるので、1 未満にして慎重に近づく。
 
+    on_step: 関数を渡すと、腕を動かすたびに on_step(回数, IKの反復ごとの距離のリスト) を呼ぶ(様子を記録する用)。
+
     戻り値: 各回のずれの大きさ [m] のリスト(最後は動かした後の測定値)。
     """
     history = []
@@ -168,8 +170,11 @@ def servo_closed_loop(model, data, renderer, hover_z, cam_pos=None, gain=0.8, ma
     target_xy = np.array(cube_xy)  # 最初は open-loop と同じ: 立方体の推定位置を目標にする
     q = data.qpos[:N_ARM].copy()
     for i in range(max_iter):
-        q, _ok = plan_hover(model, target_xy, hover_z, q)
+        ik_hist = []
+        q, _ok = plan_hover(model, target_xy, hover_z, q, history=ik_hist)
         move_arm(model, data, q, first_move if i == 0 else settle)
+        if on_step is not None:
+            on_step(i, ik_hist)
         # 手先と目印の位置関係は、いまの関節角から計算できる(実機ならエンコーダの値から。カメラは使わない)。
         tip_fk, marker_fk = forward_sites(model, data.qpos[:N_ARM])
         marker_xy = locate_marker(model, data, renderer, marker_fk[2], cam_pos=cam_pos)  # 目印の高さで奥行きを計算
