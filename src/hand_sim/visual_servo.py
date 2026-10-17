@@ -44,6 +44,17 @@ def plan_hover(model, xy, hover_z, q_init):
     return solve_ik(model, scratch, [xy[0], xy[1], hover_z], q_init)
 
 
+def forward_tip(model, q):
+    """関節角 q (長さ5) のときの手先の世界座標 (x, y, z) [m] を、腕を動かさずに計算だけで求める(順運動学)。
+
+    plan_hover と同じく計算専用の data を使う。IK が出した q が、本当に目標に届く角度かを確かめるのに使う。
+    """
+    scratch = mujoco.MjData(model)
+    scratch.qpos[:N_ARM] = q
+    mujoco.mj_forward(model, scratch)  # qpos から site の位置などを計算する(時間は進めない)
+    return gripper_position(model, scratch)
+
+
 def move_arm(model, data, q, seconds=3.0):
     """関節角 q (長さ5) を ctrl(目標角度)に入れ、seconds 秒ぶんシミュレーションを進める。
 
