@@ -62,6 +62,10 @@ SO-101 の要点: 6関節(`shoulder_pan`, `shoulder_lift`, `elbow_flex`, `wrist_
   具体的なコマンドは、公式ページの最新を見る。
 - **LeRobot は、この `.venv`(Python 3.14)に入れない。** 要求される Python のバージョンを公式ガイドで確認し、別の環境(`uv` が使える)に入れる。
   Feetech サーボ用の追加機能は、LeRobot のフォルダで `pip install -e ".[feetech]"`(公式の最新の手順を確認)。
+- **実機の進捗(2026-10-19):** LeRobot 0.6.2 を `~/lerobot-work/lerobot`(Python 3.12 の別環境)に導入済み。基板のポートは `/dev/ttyACM0`。
+  フォロワーのサーボ ID を設定済み(shoulder_pan=1、shoulder_lift=2、elbow_flex=3、wrist_flex=4、wrist_roll=5、gripper=6)。
+  次は、サーボに ID のラベルを貼る → 組み立て(Joint 1〜5、Gripper)→ 数珠つなぎ → `lerobot-calibrate`。
+  Linux では USB を抜き差しすると、`sudo chmod 666 /dev/ttyACM0` の設定が戻る。
 - 実機のサーボとの通信方法は、LeRobot を使う方向(組み立ての公式ガイドが LeRobot 前提のため)。直接シリアル通信にするかは、必要になったら検討する。
 - LeRobot ではグリッパを 0〜100 の直動量で扱うが、モデルでは回転関節(rad)。変換は未実装。
 - **Mac での動作は未確認**(手順は `README.md` の「Mac で動かす」)。
