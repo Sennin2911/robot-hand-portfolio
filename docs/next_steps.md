@@ -72,7 +72,9 @@ SO-101 の要点: 6関節(`shoulder_pan`, `shoulder_lift`, `elbow_flex`, `wrist_
   `scripts/real_move_joints.py`(解説 `docs/real_move_joints.md`)で1関節ずつ ±delta 動かす確認を開始(`wrist_roll` ±5° は差 ±0.4°)。
   次は、各関節の + の向きを記録 → sim の角度(rad)と実機の値(度)の変換(符号・原点・gripper の 0〜100)。
   5関節+gripper の ±30 の差を記録済み(`docs/real_move_joints.md`。基本の誤差は ±0.2〜0.5°、重力がかかる関節は −30 側で最大 +2.0°)。
-  **実機の + の向き(sim と同じ/逆)が未記入**。ここが埋まれば変換コードに進める。
+  実機の + の向きは、wrist_roll 以外は sim と同じ(wrist_roll も土台側から見て反時計回りなら同じ。どちらから見たかは未確認)。
+  変換コード `src/hand_sim/sim_real.py` と `scripts/check_sim_real.py`(全OK)を実装済み。
+  次は、sim の目標を実機に送って動かす確認(まず1関節、次に全関節)。
   変換の整理は `docs/sim_real_mapping.md`(sim の可動域との比較まで済み。+ の向きの表は実機で確認して埋める)。
   変換コード(`src/hand_sim/sim_real.py`)は、向きが揃ってから実装する。
   **ゲート1は「届く」まで通った時点で通過とし、実機の作業を進める**(作者の了承、2026-10-20)。掴む動作は後回し。

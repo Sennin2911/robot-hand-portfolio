@@ -52,15 +52,21 @@ sim の動きは、ビューアで目で確認できる(右の Control パネル
 
 実機側は、`real_move_joints.py` で + にしたとき上の表と同じ向きか逆かを、下の表に書く。
 
-| 関節 | 実機の + は sim と… | 符号 |
-|---|---|---|
-| shoulder_pan | 未記入 | |
-| shoulder_lift | 未記入 | |
-| elbow_flex | 未記入 | |
-| wrist_flex | 未記入 | |
-| wrist_roll | 未記入 | |
-| gripper | 未記入 | |
+| 関節 | 実機の + の動き(2026-10-20 に確認) | sim と… | 符号 |
+|---|---|---|---|
+| shoulder_pan | 右方向 | 同じ | +1 |
+| shoulder_lift | 前方向 | 同じ | +1 |
+| elbow_flex | 下方向 | 同じ | +1 |
+| wrist_flex | 下方向 | 同じ | +1 |
+| wrist_roll | 反時計回り(**どこから見たかが未確認**) | 土台側から見た向きなら同じ | +1(仮) |
+| gripper | 開く | 同じ(sim も + で顎の間隔が広がる) | +1 |
 
-## 次の実装
-符号とオフセットが分かったら、`src/hand_sim/sim_real.py` に変換関数(sim の ctrl → 実機の dict、実機の観測 → sim の qpos)を作る。
-答え合わせは `scripts/check_sim_real.py`(往復して元に戻るか、範囲外を切り詰めるか)。
+wrist_roll は、実機の + を**土台側から手先を見て**反時計回りと見たなら +1、手先側から見たなら −1。
+実機の + (最初の動き)を、どちらから見たか教えてもらえれば確定する。
+
+gripper は、sim の範囲(−10°〜100°)の下限を実機の 0、上限を 100 に直線で対応させている
+(sim の下限が「完全に閉じた」状態で、実機の 0 と同じだという仮定)。
+
+## 実装
+変換は `src/hand_sim/sim_real.py`(`sim_to_real` / `real_to_sim`)、答え合わせは `scripts/check_sim_real.py`(全OK)。
+sim の可動域の外の値は端に切り詰める。
