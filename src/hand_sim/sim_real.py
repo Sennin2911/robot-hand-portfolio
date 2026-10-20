@@ -9,7 +9,7 @@ import numpy as np
 JOINTS = ["shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll", "gripper"]
 
 # 実機の + の向きが sim と同じなら +1、逆なら -1。実機で 1 関節ずつ動かして確かめた結果(2026-10-20)。
-# wrist_roll は「半時計回り」としか聞いていない(どちらから見たかが未確認)ので、仮に +1 にしている。
+# wrist_roll は、実機の + が「土台側から手先を見て反時計回り」(作者の確認)で、sim の + と同じ向き。
 SIGN = {
     "shoulder_pan": +1,
     "shoulder_lift": +1,
