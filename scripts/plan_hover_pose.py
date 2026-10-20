@@ -25,7 +25,7 @@ HOME = [0, -1.7, 1.6, 1.0, 0]  # IK の出発点: たたんだ姿勢(check_visua
 parser = argparse.ArgumentParser()
 parser.add_argument("--xy", type=float, nargs=2, default=[0.22, -0.12], help="手先の水平位置 x y [m]。既定は scene_vs.xml の立方体の位置")
 parser.add_argument("--z", type=float, default=0.10, help="手先の高さ [m]。床(机)の面が 0")
-parser.add_argument("--gripper", type=float, default=0.0, help="gripper の値 (実機の 0〜100 の尺度)。0 が閉")
+parser.add_argument("--gripper", type=float, default=10.0, help="gripper の値 (実機の 0〜100 の尺度)。0 が閉。端(0, 100)の近くは real_send_pose.py が拒否するので避ける")
 args = parser.parse_args()
 
 model = mujoco.MjModel.from_xml_path(str(ROOT / "models" / "so101" / "scene.xml"))
