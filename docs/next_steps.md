@@ -75,7 +75,8 @@ SO-101 の要点: 6関節(`shoulder_pan`, `shoulder_lift`, `elbow_flex`, `wrist_
   実機の + の向きは、全関節とも sim と同じ(符号はすべて +1。wrist_roll は土台側から見て反時計回りと作者が確認)。
   変換コード `src/hand_sim/sim_real.py` と `scripts/check_sim_real.py`(全OK)を実装済み。
   sim の姿勢を見る `scripts/view_sim_pose.py`(実機に送る値とコマンドも表示)と、実機を指定姿勢へ動かす `scripts/real_send_pose.py` を作成(実機での実行は未)。
-  次は、全関節 0 の姿勢で、sim の見た目と実機の腕の形を見比べる(0 の位置が同じか)。次に、他の姿勢も試す。
+  `real_send_pose.py --pose 30 0 30 0 60 60` で実機が指定どおりに動くことを確認済み(2026-10-21)。`view_sim_pose.py --pose ...` も同じ値で指定できる。
+  **未確認:** sim のウィンドウ(`--no-view` なし)の姿勢と、実機の腕の形が同じ見た目か。特に全関節 0 の姿勢(0 の位置が同じか)と gripper の開き具合。
   変換の整理は `docs/sim_real_mapping.md`(sim の可動域との比較まで済み。+ の向きの表は実機で確認して埋める)。
   変換コード(`src/hand_sim/sim_real.py`)は、向きが揃ってから実装する。
   **ゲート1は「届く」まで通った時点で通過とし、実機の作業を進める**(作者の了承、2026-10-20)。掴む動作は後回し。
