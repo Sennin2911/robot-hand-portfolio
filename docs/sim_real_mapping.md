@@ -46,6 +46,10 @@ sim の目標を実機に送るときは、**狭い方(sim)の範囲に収める
 | wrist_roll | −x | 土台側から手先を見て**反時計回り** |
 | gripper | ほぼ −y | 開閉のどちらかは未確認(モデルの見た目で要確認) |
 
+sim の動きは、ビューアで目で確認できる(右の Control パネルのスライダが各関節の `ctrl` [rad]):
+
+    .venv/bin/python -m mujoco.viewer --mjcf=models/so101/scene.xml
+
 実機側は、`real_move_joints.py` で + にしたとき上の表と同じ向きか逆かを、下の表に書く。
 
 | 関節 | 実機の + は sim と… | 符号 |
