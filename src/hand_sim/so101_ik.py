@@ -61,3 +61,45 @@ def solve_ik(model, data, target, q_init, max_iter=200, tol=1e-4, damping=0.05, 
         q = np.clip(q + dq, lo, hi)  # 可動域を超えないよう切り詰める (np.clip: 範囲外を端の値にする)
 
     return q, False
+
+
+def solve_ik_pose(model, data, target_pos, target_R, q_init, max_iter=300, tol_pos=1e-4, tol_rot=1e-3,
+                  damping=0.05, max_step=0.2, rot_weight=0.5):
+    """手先(gripperframe)を、位置 target_pos [m] と向き target_R (3×3 の回転行列)の両方に合わせる関節角 (長さ5) を求める。
+
+    solve_ik は位置だけを合わせた。掴む動作では「指を真下に向ける」「指の開閉の向きを机と平行にする」も要るので、向きも目標にする。
+    考え方は solve_ik と同じ(ヤコビアン + 減衰付き最小二乗法)。違いは、誤差が「位置の誤差 3 つ + 向きの誤差 3 つ」の 6 つになる点。
+    5 つの関節で 6 つの条件を満たすので、目標の向きが「この腕で作れる向き」(指を真下に向けて、手首を回す)でないと、完全には合わない。
+
+    target_R の列は、gripperframe の x 軸、y 軸、z 軸が世界座標でどちらを向くか(列 = 軸)。
+    rot_weight : 向きの誤差を、位置の誤差(m)と同じ土台で比べるための重み。大きいほど向きを優先する。
+    戻り値: (q, ok)。ok は、位置と向きが両方とも許容内に入ったか。
+    """
+    site_id = model.site("gripperframe").id
+    lo, hi = model.jnt_range[:N_ARM, 0], model.jnt_range[:N_ARM, 1]
+    q = np.clip(np.array(q_init, dtype=float), lo, hi)
+    jacp = np.zeros((3, model.nv))
+    jacr = np.zeros((3, model.nv))  # 回転(角速度)のヤコビアン用の入れ物
+
+    for _ in range(max_iter):
+        data.qpos[:N_ARM] = q
+        mujoco.mj_forward(model, data)
+        R = data.site_xmat[site_id].reshape(3, 3)  # 今の gripperframe の向き(site_xmat は長さ9の並びなので 3×3 に直す)
+        err_pos = np.asarray(target_pos) - data.site_xpos[site_id]
+        # 向きの誤差: 今の各軸と目標の各軸の外積(cross)を足す。「今の向きを、目標の向きへ回すための回転軸 × 角度」の近似になる。
+        #   np.cross(a, b): 2 つのベクトルの外積。向きがそろっていれば 0。[頻度] 3次元の向きの計算でよく使う
+        err_rot = 0.5 * sum(np.cross(R[:, i], target_R[:, i]) for i in range(3))
+        if np.linalg.norm(err_pos) < tol_pos and np.linalg.norm(err_rot) < tol_rot:
+            return q, True
+
+        mujoco.mj_jacSite(model, data, jacp, jacr, site_id)
+        J = np.vstack([jacp[:, :N_ARM], rot_weight * jacr[:, :N_ARM]])  # 6行 × 5列。np.vstack: 行列を縦に積む。[頻度] よく使う
+        err = np.concatenate([err_pos, rot_weight * err_rot])  # 長さ6
+        A = J @ J.T + damping**2 * np.eye(6)
+        dq = J.T @ np.linalg.solve(A, err)
+        biggest = np.max(np.abs(dq))
+        if biggest > max_step:
+            dq *= max_step / biggest
+        q = np.clip(q + dq, lo, hi)
+
+    return q, False
