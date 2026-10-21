@@ -97,14 +97,16 @@ def detect_cubes(model, data, renderer, cam_err=(0.0, 0.0), noise_px=0.0, rng=No
     return found
 
 
-def run_attempt(model, data, renderer, color, cam_err=(0.0, 0.0), noise_px=0.0, rng=None):
+def run_attempt(model, data, renderer, color, cam_err=(0.0, 0.0), noise_px=0.0, rng=None, on_step=None, on_detect=None):
     """color の立方体を、1 回だけ、見つけて → 掴んで → 置き場へ運ぶ。結果の辞書(記録 1 行ぶん)を返す。
 
     記録: 成功したか(success)、失敗の種類(fail_class。成功なら "")、認識の誤差(det_err_mm、det_yaw_err_deg)、
           最終の位置の置き場の中心からのずれ(final_err_mm)、他の立方体を動かした量(moved_others_mm)、所要時間(cycle_s、sim の時間)。
+    on_step  : シミュレーションの 1 ステップごとに呼ぶ関数(ビューアの表示用)。None なら何もしない。
+    on_detect: 撮影して位置を出した直後に、on_detect(color, 見つけた (x, y, yaw) または None, 本当の (x, y)) を呼ぶ(ビューアで見つけた位置を示す用)。
     """
     t0 = data.time
-    go_home(model, data, 2.0)  # 腕を視野の外へ。立方体を隠さない
+    go_home(model, data, 2.0, on_step)  # 腕を視野の外へ。立方体を隠さない
     others_before = {c: true_cube_pose(model, data, c)[0] for c in COLORS if c != color}
     true_xy, true_yaw = true_cube_pose(model, data, color)
     rec = {"color": color, "true_x": true_xy[0], "true_y": true_xy[1], "true_yaw_deg": np.degrees(true_yaw),
@@ -112,6 +114,8 @@ def run_attempt(model, data, renderer, color, cam_err=(0.0, 0.0), noise_px=0.0, 
            "final_err_mm": np.nan, "moved_others_mm": 0.0, "cycle_s": 0.0}
 
     det = detect_cubes(model, data, renderer, cam_err, noise_px, rng)[color]
+    if on_detect is not None:
+        on_detect(color, det, true_xy)
     if det is None:
         rec["fail_class"] = "未検出"
     else:
@@ -119,7 +123,7 @@ def run_attempt(model, data, renderer, color, cam_err=(0.0, 0.0), noise_px=0.0, 
         rec["det_err_mm"] = float(np.linalg.norm(np.array([x, y]) - true_xy) * 1000)
         rec["det_yaw_err_deg"] = yaw_error_deg(yaw, true_yaw)
         try:
-            log = pick_and_place(model, data, [x, y, CUBE_Z], ZONES[color], yaw, cube=f"cube_{color}")
+            log = pick_and_place(model, data, [x, y, CUBE_Z], ZONES[color], yaw, on_step=on_step, cube=f"cube_{color}")
         except ValueError:  # so101_grasp.plan_pick_place: どの向きでも IK が解けない
             rec["fail_class"] = "到達不可"
         else:
@@ -141,20 +145,25 @@ def run_attempt(model, data, renderer, color, cam_err=(0.0, 0.0), noise_px=0.0, 
     return rec
 
 
-def run_episode(model, renderer, rng, cam_err=(0.0, 0.0), noise_px=0.0, retries=1):
+def run_episode(model, renderer, rng, cam_err=(0.0, 0.0), noise_px=0.0, retries=1, on_step=None, on_detect=None, on_record=None, data=None):
     """3 色の立方体をランダムに置いて、全部を置き場へ運ぶ(1 エピソード)。記録の辞書のリストを返す。
 
     掴めなかった(成功でない)立方体は、最大 retries 回だけやり直す(撮り直して、やり直す)。未検出と到達不可は、やり直しても同じなのでやり直さない。
     各記録には、エピソードの番号は付いていない(呼び出し側で足す)。attempt が何回目か、final_success が最終的に成功したかを付ける。
+    on_step、on_detect: run_attempt と同じ(ビューアの表示用)。on_record: 1 回の試行が終わるたびに、その記録を渡して呼ぶ関数(途中経過の表示用)。
+    data: 立方体を置いた状態の data(new_episode で作ったもの)。None なら、ここでランダムな配置を作る。
+          ビューアは、開く時点で data が要るので、呼び出し側で作って渡せるようにしてある。
     """
-    layout = random_layout(rng)
-    data = new_episode(model, layout)
+    if data is None:
+        data = new_episode(model, random_layout(rng))
     records = []
     for color in rng.permutation(COLORS):  # rng.permutation: 順番をランダムに並べ替える(置く順番もばらつかせる)
         color = str(color)
         for attempt in range(1, retries + 2):
-            rec = run_attempt(model, data, renderer, color, cam_err, noise_px, rng)
+            rec = run_attempt(model, data, renderer, color, cam_err, noise_px, rng, on_step, on_detect)
             rec["attempt"] = attempt
+            if on_record is not None:
+                on_record(rec)
             records.append(rec)
             if rec["success"] or rec["fail_class"] in ("未検出", "到達不可"):
                 break
