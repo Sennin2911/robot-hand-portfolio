@@ -1,8 +1,8 @@
 """【概要】較正用の目印を「手に付ける」か「机(土台のそば)に固定する」かの違いを、sim で調べる。
 (1) 腕の関節が、sim のモデルとずれている(実機の関節のオフセットの再現)とき、手の目印による較正と仕分けが、どうなるか。
     手の目印の位置は「指令した関節角から計算」するので、腕がずれていると、計算した位置と、カメラが見る実際の位置がずれる。
-(2) 机の面に置いた固定の目印(位置は、腕と無関係に、定規などで分かる)で較正すると、どうなるか。
-    (画像は合成: 本当のカメラで、目印の画素を計算する。固定の目印は、腕に依存しないので、sim で腕を動かす必要はない。)
+(2) 机の面に置いた固定の目印(位置は、腕と無関係に、定規などで分かる)で較正すると、どうなるか(合成データ)。
+(3) 固定の目印でカメラを較正 → そのカメラで手の目印を見て、腕の関節のずれを測る → 補正して仕分け、が通るか(sim に固定の目印を置いて、画像から)。
 結果の読み方は docs/marker_placement.md。実機は動かさない。
 
 使い方(この .venv で実行):
@@ -23,6 +23,7 @@ import mujoco  # noqa: E402
 import numpy as np  # noqa: E402
 import hand_sim.so101_grasp as grasp  # noqa: E402
 from hand_sim.calibration import calibrate_camera, project  # noqa: E402
+from hand_sim.marker_calib import calibrate_from_fixed_markers, estimate_arm_offsets, fixed_marker_positions  # noqa: E402
 from hand_sim.sorting import IMG_H, IMG_W, calibrate_overhead_camera, load_sort_model, run_episode  # noqa: E402
 from hand_sim.vision import pixel_to_world  # noqa: E402
 
@@ -32,10 +33,9 @@ cam = model.camera("overhead")
 TRUE_POS, TRUE_FOVY = np.array(cam.pos), float(model.cam_fovy[cam.id])
 
 
-def run(label, arm_error_deg, calibrate, mount_err=(0.0, 0.0, 0.0), n_episodes=12):
+def run(label, arm_error_deg, calibrate, mount_err=(0.0, 0.0, 0.0), n_episodes=12, cam_model=None):
     """腕のずれ arm_error_deg(度、5 関節)、較正の有無、目印の位置の測り間違い mount_err [m] で、仕分けを n_episodes 回(3 個ずつ)試す。"""
     grasp.set_arm_error(arm_error_deg)
-    cam_model = None
     if calibrate:
         pos, fovy, _, _ = calibrate_overhead_camera(model, renderer, TRUE_POS + [0.02, 0.0, 0.0], TRUE_FOVY, marker_pos_err=mount_err)
         cam_model = (pos, fovy)
@@ -85,4 +85,21 @@ for name, pts in [("机の面だけ(高さ 0 の 9 点)", np.array([[x, y, 0.0] 
     for noise in (0.0, 0.5, 1.0):
         errs = [workspace_error(pts, noise, s) for s in range(10)]
         print(f"  {name}、画素ノイズ {noise}: 立方体上面の座標の誤差 平均 {np.mean(errs):.1f} mm、最悪 {np.max(errs):.1f} mm")
+
+print("(3) 固定の目印でカメラを較正 → 手の目印で腕のずれを測る → 補正して仕分け(sim の画像から。出発点は、カメラの位置 30 mm ずれ)")
+fixed_n = len(fixed_marker_positions(model))
+for label, arm_err in [("腕のずれ大", BIG), ("腕のずれ小", SMALL)]:
+    for noise, board_err_mm in [(0.0, 0.0), (0.5, 2.0)]:
+        rng_m = np.random.default_rng(1)
+        grasp.set_arm_error(arm_err)
+        grasp.set_arm_compensation(0)
+        board_err = rng_m.normal(0, board_err_mm / 1000, (fixed_n, 3)) if board_err_mm > 0 else None  # 板の位置を、定規で測った誤差(目印ごとにばらつく)
+        pos, fovy, _, n_fix = calibrate_from_fixed_markers(model, renderer, TRUE_POS + [0.03, 0.0, 0.0], TRUE_FOVY, noise, rng_m, board_err)
+        delta, rms, n_hand = estimate_arm_offsets(model, renderer, pos, fovy, yaws_deg=(0.0, 90.0), noise_px=noise, rng=rng_m)
+        print(f"  {label} {arm_err}、画素ノイズ {noise}、固定の目印の位置の誤差 {board_err_mm} mm: カメラの位置の差 x,y = {np.linalg.norm(pos[:2] - TRUE_POS[:2]) * 1000:.1f} mm"
+              f"(目印 {n_fix} 個)、腕のずれの推定 {np.round(delta, 2)}(本当の値との差の最大 {np.abs(delta - np.array(arm_err)).max():.2f}°、手の目印 {n_hand} 点)")
+        grasp.set_arm_compensation(delta)  # 推定したずれを、制御側の補正にする
+        run(f"    → 補正して仕分け", arm_err, False, cam_model=(pos, fovy))
+        grasp.set_arm_compensation(0)
+grasp.set_arm_error(0)
 renderer.close()

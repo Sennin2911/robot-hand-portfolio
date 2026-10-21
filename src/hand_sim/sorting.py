@@ -188,7 +188,7 @@ CALIB_XY = [(0.14, -0.12), (0.14, 0.04), (0.20, -0.12), (0.20, 0.0), (0.20, 0.06
 CALIB_Z = (0.03, 0.08)  # 手先(gripperframe)の高さ。これより高いと、手を真下に向けたままでは、手首が可動域の端に届かず、IK が解けない
 
 
-def collect_hand_marker_samples(model, renderer, noise_px=0.0, rng=None, marker_pos_err=(0.0, 0.0, 0.0), camera="overhead", yaws_deg=(0.0,)):
+def collect_hand_marker_samples(model, renderer, noise_px=0.0, rng=None, marker_pos_err=(0.0, 0.0, 0.0), camera="overhead", yaws_deg=(0.0,), with_q=False):
     """手の目印の観測を集める: 手を CALIB_XY × CALIB_Z の位置へ、指を真下に向けて動かし、各位置で撮影する。
 
     戻り値: (points, pixels)。points = 目印の世界座標 (N×3、関節角から計算。カメラに依存しない)、pixels = 目印の画素 (N×2)。
@@ -201,7 +201,7 @@ def collect_hand_marker_samples(model, renderer, noise_px=0.0, rng=None, marker_
     data = mujoco.MjData(model)
     marker_id = model.site("hand_marker_site").id
     import hand_sim.so101_grasp as grasp  # ARM_ERROR(試験用の腕のずれ)の「今の値」を読むため。from import だと、設定前の値が固定される
-    points, pixels = [], []
+    points, pixels, qs = [], [], []
     q = np.array(HOME_Q, dtype=float)
     for yaw_deg, (x, y), z in [(yaw, xy, z) for yaw in yaws_deg for z in CALIB_Z for xy in CALIB_XY]:
         R = grasp_rotation(np.radians(yaw_deg))  # 手を真下に向けた向き(指の開閉の向きが yaw_deg)
@@ -223,7 +223,8 @@ def collect_hand_marker_samples(model, renderer, noise_px=0.0, rng=None, marker_
             u, v = u + rng.normal(0, noise_px), v + rng.normal(0, noise_px)
         points.append(marker_world + marker_pos_err)  # 指令した関節角から計算した目印の世界座標。+ で新しい配列ができる
         pixels.append((u, v))
-    return np.array(points), np.array(pixels)
+        qs.append(q.copy())
+    return (np.array(points), np.array(pixels), qs) if with_q else (np.array(points), np.array(pixels))
 
 
 def calibrate_overhead_camera(model, renderer, belief_pos, belief_fovy, noise_px=0.0, rng=None, marker_pos_err=(0.0, 0.0, 0.0)):

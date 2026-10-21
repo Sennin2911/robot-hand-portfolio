@@ -117,12 +117,20 @@ HOME_Q = np.array([-1.57, -1.7, 1.6, 1.0, 0.0])
 # move_to が ctrl(目標角度)に足す。sim の腕が「実機のように、sim のモデルとずれた腕」になるので、
 # 較正や掴む動作が、腕のずれにどれだけ耐えるかを調べられる。set_arm_error(度) で設定する。
 ARM_ERROR = np.zeros(N_ARM)
+# 試験用: 制御側が、「腕のずれ」を知っているとして、指令から引く補正 [rad]。実機の sim_real.py の OFFSET_DEG(指令から引く)に当たる。通常は 0。
+ARM_COMP = np.zeros(N_ARM)
 
 
 def set_arm_error(deg):
     """腕の 5 関節のずれ(度、長さ 5 のリスト。0 を渡すと、ずれなし)を設定する。"""
     global ARM_ERROR  # global: 関数の外の変数を書き換える宣言。[頻度] 試験用の設定でだけ使う
     ARM_ERROR = np.radians(np.broadcast_to(np.asarray(deg, dtype=float), N_ARM)).copy()  # broadcast_to: 1 つの数を、5 つぶんに広げる
+
+
+def set_arm_compensation(deg):
+    """制御側が使う、腕のずれの補正(度、長さ 5。指令から、この角度を引く)を設定する。腕のずれ(ARM_ERROR)を推定して、打ち消すのに使う。"""
+    global ARM_COMP
+    ARM_COMP = np.radians(np.broadcast_to(np.asarray(deg, dtype=float), N_ARM)).copy()
 
 
 def go_home(model, data, seconds=2.0, on_step=None):
@@ -209,7 +217,7 @@ def move_to(model, data, q_arm, grip, seconds, on_step=None):
     on_step: 1 ステップごとに呼ぶ関数(動画のフレーム保存や、ログの記録に使う)。None なら何もしない。
     """
     start = data.ctrl[: N_ARM + 1].copy()
-    goal = np.append(np.asarray(q_arm) + ARM_ERROR, grip)  # 腕の目標に、試験用のずれ(通常は 0)を足す
+    goal = np.append(np.asarray(q_arm) - ARM_COMP + ARM_ERROR, grip)  # 腕の目標: 補正を引いて(制御側)、試験用のずれ(通常は 0)を足す(実際の腕)
     n = max(1, int(seconds / model.opt.timestep))  # model.opt.timestep: 1 ステップの時間 [秒]
     for i in range(1, n + 1):
         s = i / n

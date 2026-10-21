@@ -33,6 +33,25 @@
     <geom name="pad_green" type="box" size="0.03 0.03 0.001" pos="0.14 0.17 0.001" material="pad_green" contype="0" conaffinity="0"/>
     <geom name="pad_blue" type="box" size="0.03 0.03 0.001" pos="0.21 0.17 0.001" material="pad_blue" contype="0" conaffinity="0"/>
 
+    <!-- 較正用の「固定の目印」: 水色(シアン)の小さな球。机の上(球の中心の高さ 8 mm)と、細い柱の上(高さ 8 cm)に、全部で 10 個。
+         位置は、ロボットの座標(土台が原点)で分かっていて、腕に依存しない。実機では、位置の分かる板(ArUco などのマーカー)に当たる。
+         立方体を置く範囲(x = 0.14〜0.26、y = −0.14〜+0.06)と、置き場(y = 0.14〜0.20)、待機の腕の位置(左側)を避けて、カメラに写る範囲の周りに置く。
+         どれも contype/conaffinity="0"(何とも衝突しない)。名前は fixed_marker_<番号>(sorting.py が、この名前で位置を読む)。 -->
+    <geom name="fixed_marker_0" type="sphere" size="0.008" pos="0.08 -0.20 0.008" rgba="0 1 1 1" contype="0" conaffinity="0"/>
+    <geom name="fixed_marker_1" type="sphere" size="0.008" pos="0.20 -0.21 0.008" rgba="0 1 1 1" contype="0" conaffinity="0"/>
+    <geom name="fixed_marker_2" type="sphere" size="0.008" pos="0.32 -0.19 0.008" rgba="0 1 1 1" contype="0" conaffinity="0"/>
+    <geom name="fixed_marker_3" type="sphere" size="0.008" pos="0.34 -0.02 0.008" rgba="0 1 1 1" contype="0" conaffinity="0"/>
+    <geom name="fixed_marker_4" type="sphere" size="0.008" pos="0.33 0.12 0.008" rgba="0 1 1 1" contype="0" conaffinity="0"/>
+    <geom name="fixed_marker_5" type="sphere" size="0.008" pos="0.06 -0.12 0.008" rgba="0 1 1 1" contype="0" conaffinity="0"/>
+    <geom name="post_6" type="cylinder" size="0.003 0.04" pos="0.32 -0.10 0.04" rgba="0.5 0.5 0.5 1" contype="0" conaffinity="0"/>
+    <geom name="fixed_marker_6" type="sphere" size="0.008" pos="0.32 -0.10 0.08" rgba="0 1 1 1" contype="0" conaffinity="0"/>
+    <geom name="post_7" type="cylinder" size="0.003 0.04" pos="0.33 0.05 0.04" rgba="0.5 0.5 0.5 1" contype="0" conaffinity="0"/>
+    <geom name="fixed_marker_7" type="sphere" size="0.008" pos="0.33 0.05 0.08" rgba="0 1 1 1" contype="0" conaffinity="0"/>
+    <geom name="post_8" type="cylinder" size="0.003 0.04" pos="0.13 -0.20 0.04" rgba="0.5 0.5 0.5 1" contype="0" conaffinity="0"/>
+    <geom name="fixed_marker_8" type="sphere" size="0.008" pos="0.13 -0.20 0.08" rgba="0 1 1 1" contype="0" conaffinity="0"/>
+    <geom name="post_9" type="cylinder" size="0.003 0.04" pos="0.26 -0.20 0.04" rgba="0.5 0.5 0.5 1" contype="0" conaffinity="0"/>
+    <geom name="fixed_marker_9" type="sphere" size="0.008" pos="0.26 -0.20 0.08" rgba="0 1 1 1" contype="0" conaffinity="0"/>
+
     <!-- 立方体: 一辺 3 cm(size は「一辺の半分」)、20 g。freejoint は、6 自由度で自由に動ける物体にする印。
          名前の約束: body は cube_<色>、freejoint は cube_<色>_free、geom は cube_<色>_geom。 -->
     <body name="cube_red" pos="0.15 -0.10 0.015">
