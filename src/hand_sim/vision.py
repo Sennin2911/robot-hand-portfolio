@@ -127,9 +127,12 @@ def bbox_to_center(bbox):
 # ---- 複数の色の立方体を見分けて、位置と向きを出す(部品仕分け用。新計画の工程3)----
 
 def color_mask(img, color):
-    """画像 img の中で、color ("red"、"green"、"blue")の画素が True の配列(マスク)を返す。
+    """画像 img の中で、color ("red"、"green"、"blue"、手の目印の "magenta")の画素が True の配列(マスク)を返す。
     条件は「その色のチャンネルが大きく(100 超)、他の 2 つがその 0.4 倍未満」。置き場の薄い色(他のチャンネルも大きい)や、
     アームの黄色・黒は、この条件で除外される。"""
+    if color == "magenta":  # 手の目印(赤と青が大きく、緑が小さい)。立方体の 3 色の条件には当てはまらない
+        r, g, b = (img[:, :, c].astype(float) for c in range(3))
+        return (r > 100) & (b > 100) & (g < 0.4 * np.minimum(r, b))
     channel = {"red": 0, "green": 1, "blue": 2}[color]
     main = img[:, :, channel].astype(float)  # astype(float): 整数(uint8)のまま 0.4 倍などを比べると、丸め誤差が出るので小数にする
     others = [img[:, :, c].astype(float) for c in range(3) if c != channel]

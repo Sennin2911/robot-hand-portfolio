@@ -6,6 +6,7 @@
     .venv/bin/python scripts/run_sorting_trials.py                              # 既定: 34 エピソード(= 102 個)、カメラのずれなし
     .venv/bin/python scripts/run_sorting_trials.py --cam-err-mm 10 0            # カメラの位置を x 方向に 10 mm ずらして信じる
     .venv/bin/python scripts/run_sorting_trials.py --noise-px 2 --tag noise2    # 画素位置に標準偏差 2 画素のノイズ
+    .venv/bin/python scripts/run_sorting_trials.py --cam-err-mm 30 0 --calibrate --tag camx30_cal   # 較正してから試験(手の目印でカメラの位置を求め直す)
 記録は outputs/sorting_<tag>.csv に出る(--tag を省略すると baseline)。
 """
 import argparse
@@ -23,13 +24,14 @@ if sys.platform == "linux":
 
 import mujoco  # noqa: E402
 import numpy as np  # noqa: E402
-from hand_sim.sorting import FAIL_CLASSES, IMG_H, IMG_W, MOVED_MM, load_sort_model, run_episode  # noqa: E402
+from hand_sim.sorting import FAIL_CLASSES, IMG_H, IMG_W, MOVED_MM, calibrate_overhead_camera, load_sort_model, run_episode  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--episodes", type=int, default=34, help="エピソード数(1 エピソード = 3 個。34 で 102 個)")
 parser.add_argument("--seed", type=int, default=0, help="乱数の種(同じ種なら、同じ配置になる)")
 parser.add_argument("--cam-err-mm", type=float, nargs=2, default=[0.0, 0.0], metavar=("DX", "DY"), help="信じているカメラの位置の、本当の位置からのずれ [mm]")
 parser.add_argument("--noise-px", type=float, default=0.0, help="画素位置に足すランダムなずれ(標準偏差)[画素]")
+parser.add_argument("--calibrate", action="store_true", help="試験の前に、手の目印でカメラの位置と視野角を求め直す(較正)。--cam-err-mm は、較正の出発点(信じている位置)になる")
 parser.add_argument("--retries", type=int, default=1, help="掴めなかったときの、やり直しの回数")
 parser.add_argument("--tag", default="baseline", help="記録のファイル名に付ける名前")
 args = parser.parse_args()
@@ -39,9 +41,19 @@ renderer = mujoco.Renderer(model, IMG_H, IMG_W)
 rng = np.random.default_rng(args.seed)
 cam_err = (args.cam_err_mm[0] / 1000, args.cam_err_mm[1] / 1000)  # mm → m
 
+cam_model = None  # None のときは、「カメラの位置のずれ(cam_err)をそのまま信じる」
+if args.calibrate:
+    cam = model.camera("overhead")
+    true_pos, true_fovy = np.array(cam.pos), float(model.cam_fovy[cam.id])
+    # 出発点は「信じている位置」(本当の位置 + cam_err)。手の目印の撮影にも、画素ノイズを足す。
+    est_pos, est_fovy, rms, n_used = calibrate_overhead_camera(model, renderer, true_pos + [cam_err[0], cam_err[1], 0.0], true_fovy, args.noise_px, rng)
+    cam_model = (est_pos, est_fovy)
+    print(f"較正: 目印 {n_used} 点 → 位置 {np.round(est_pos, 4)} m(本当の値との差 x,y = {np.linalg.norm(est_pos[:2] - true_pos[:2]) * 1000:.2f} mm、"
+          f"z = {(est_pos[2] - true_pos[2]) * 1000:+.1f} mm)、視野角 {est_fovy:.2f}°(本当の値 {true_fovy:.0f}°)、再投影誤差 {rms:.2f} 画素")
+
 records = []
 for ep in range(args.episodes):
-    for rec in run_episode(model, renderer, rng, cam_err, args.noise_px, args.retries):
+    for rec in run_episode(model, renderer, rng, cam_err, args.noise_px, args.retries, cam_model=cam_model):
         rec["episode"] = ep
         records.append(rec)
 
@@ -62,7 +74,7 @@ firsts = [r for r in records if r["attempt"] == 1]  # 1 回目だけ = 立方体
 n_cube = len(firsts)
 ok_first = sum(r["success"] for r in firsts)
 ok_final = sum(r["final_success"] for r in firsts)
-print(f"条件: カメラのずれ {args.cam_err_mm} mm、ノイズ {args.noise_px} 画素、やり直し {args.retries} 回まで、乱数の種 {args.seed}")
+print(f"条件: カメラのずれ {args.cam_err_mm} mm、ノイズ {args.noise_px} 画素、較正 {'あり' if args.calibrate else 'なし'}、やり直し {args.retries} 回まで、乱数の種 {args.seed}")
 print(f"立方体 {n_cube} 個(試行 {n_attempt} 回)")
 print(f"  1 回目で成功: {ok_first} / {n_cube} = {100 * ok_first / n_cube:.1f}%")
 print(f"  やり直しも含めて成功: {ok_final} / {n_cube} = {100 * ok_final / n_cube:.1f}%")

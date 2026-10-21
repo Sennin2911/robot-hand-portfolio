@@ -8,9 +8,13 @@
 import mujoco
 import numpy as np
 
-from hand_sim.so101_grasp import GRIP_OPEN, HOME_Q, go_home, load_grasp_model, pick_and_place, set_cube_pose
+from hand_sim.calibration import calibrate_camera
+from hand_sim.so101_grasp import (
+    GRIP_OPEN, HOME_Q, go_home, grasp_rotation, load_grasp_model, pick_and_place, set_cube_pose,
+)
+from hand_sim.so101_ik import solve_ik_pose
 from hand_sim.visual_servo import CUBE_TOP_Z
-from hand_sim.vision import find_cube_pose, pixel_to_world
+from hand_sim.vision import _largest_component, color_mask, find_cube_pose, pixel_to_world
 
 COLORS = ("red", "green", "blue")
 # 置き場の中心 (x, y) [m] と、板の半分の大きさ。scene_sort.xml の pad_* と同じ値にする(食い違うと、成功の判定がずれる)。
@@ -29,7 +33,7 @@ FAIL_CLASSES = ("未検出", "到達不可", "把持失敗", "運搬中の落下
 
 def load_sort_model(xml_path):
     """仕分け用のシーンを読み込み、指の当たり判定を掴む用に作り直した model を返す(so101_grasp.load_grasp_model を使う)。"""
-    return load_grasp_model(xml_path, cube_geoms=tuple(f"cube_{c}_geom" for c in COLORS))
+    return load_grasp_model(xml_path, cube_geoms=tuple(f"cube_{c}_geom" for c in COLORS), hand_marker=True)
 
 
 def random_layout(rng):
@@ -71,18 +75,21 @@ def yaw_error_deg(a, b):
     return float(np.degrees(min(d, np.pi / 2 - d)))
 
 
-def detect_cubes(model, data, renderer, cam_err=(0.0, 0.0), noise_px=0.0, rng=None):
+def detect_cubes(model, data, renderer, cam_err=(0.0, 0.0), noise_px=0.0, rng=None, cam_model=None):
     """真上のカメラで撮影して、3 色の立方体の {色: (x, y, yaw[rad])} を返す。見つからない色は、値が None。
 
     cam_err : プログラムが信じているカメラの位置の、本当の位置からのずれ (dx, dy) [m]。実機ではカメラの位置を測って求めるので、ずれる。
               ずれた分だけ、見つけた位置が全部まとめてずれる(較正の誤差を再現する)。
     noise_px: 画素位置にわざと足すランダムなずれの大きさ(標準偏差、画素)。画像のぼやけ・影・光の変化の代わり。
+    cam_model: (カメラの位置 (x, y, z)、視野角 [度])。較正で求めた値を渡すと、cam_err の代わりに、これを「信じているカメラ」として使う。
     """
     renderer.update_scene(data, camera="overhead")
     img = renderer.render()
     cam = model.camera("overhead")
     cam_pos = np.array(cam.pos) + [cam_err[0], cam_err[1], 0.0]  # 「信じているカメラの位置」
     fovy = model.cam_fovy[cam.id]
+    if cam_model is not None:  # 較正で求めた値を使う
+        cam_pos, fovy = np.asarray(cam_model[0], dtype=float), float(cam_model[1])
     found = {}
     for color in COLORS:
         pose = find_cube_pose(img, color)
@@ -97,7 +104,7 @@ def detect_cubes(model, data, renderer, cam_err=(0.0, 0.0), noise_px=0.0, rng=No
     return found
 
 
-def run_attempt(model, data, renderer, color, cam_err=(0.0, 0.0), noise_px=0.0, rng=None, on_step=None, on_detect=None):
+def run_attempt(model, data, renderer, color, cam_err=(0.0, 0.0), noise_px=0.0, rng=None, on_step=None, on_detect=None, cam_model=None):
     """color の立方体を、1 回だけ、見つけて → 掴んで → 置き場へ運ぶ。結果の辞書(記録 1 行ぶん)を返す。
 
     記録: 成功したか(success)、失敗の種類(fail_class。成功なら "")、認識の誤差(det_err_mm、det_yaw_err_deg)、
@@ -113,7 +120,7 @@ def run_attempt(model, data, renderer, color, cam_err=(0.0, 0.0), noise_px=0.0, 
            "success": False, "fail_class": "", "det_err_mm": np.nan, "det_yaw_err_deg": np.nan,
            "final_err_mm": np.nan, "moved_others_mm": 0.0, "cycle_s": 0.0}
 
-    det = detect_cubes(model, data, renderer, cam_err, noise_px, rng)[color]
+    det = detect_cubes(model, data, renderer, cam_err, noise_px, rng, cam_model)[color]
     if on_detect is not None:
         on_detect(color, det, true_xy)
     if det is None:
@@ -145,7 +152,7 @@ def run_attempt(model, data, renderer, color, cam_err=(0.0, 0.0), noise_px=0.0, 
     return rec
 
 
-def run_episode(model, renderer, rng, cam_err=(0.0, 0.0), noise_px=0.0, retries=1, on_step=None, on_detect=None, on_record=None, data=None):
+def run_episode(model, renderer, rng, cam_err=(0.0, 0.0), noise_px=0.0, retries=1, on_step=None, on_detect=None, on_record=None, data=None, cam_model=None):
     """3 色の立方体をランダムに置いて、全部を置き場へ運ぶ(1 エピソード)。記録の辞書のリストを返す。
 
     掴めなかった(成功でない)立方体は、最大 retries 回だけやり直す(撮り直して、やり直す)。未検出と到達不可は、やり直しても同じなのでやり直さない。
@@ -153,6 +160,7 @@ def run_episode(model, renderer, rng, cam_err=(0.0, 0.0), noise_px=0.0, retries=
     on_step、on_detect: run_attempt と同じ(ビューアの表示用)。on_record: 1 回の試行が終わるたびに、その記録を渡して呼ぶ関数(途中経過の表示用)。
     data: 立方体を置いた状態の data(new_episode で作ったもの)。None なら、ここでランダムな配置を作る。
           ビューアは、開く時点で data が要るので、呼び出し側で作って渡せるようにしてある。
+    cam_model: 較正で求めた (カメラの位置、視野角)。渡すと、cam_err の代わりに使う(detect_cubes を参照)。
     """
     if data is None:
         data = new_episode(model, random_layout(rng))
@@ -160,7 +168,7 @@ def run_episode(model, renderer, rng, cam_err=(0.0, 0.0), noise_px=0.0, retries=
     for color in rng.permutation(COLORS):  # rng.permutation: 順番をランダムに並べ替える(置く順番もばらつかせる)
         color = str(color)
         for attempt in range(1, retries + 2):
-            rec = run_attempt(model, data, renderer, color, cam_err, noise_px, rng, on_step, on_detect)
+            rec = run_attempt(model, data, renderer, color, cam_err, noise_px, rng, on_step, on_detect, cam_model)
             rec["attempt"] = attempt
             if on_record is not None:
                 on_record(rec)
@@ -172,3 +180,47 @@ def run_episode(model, renderer, rng, cam_err=(0.0, 0.0), noise_px=0.0, retries=
             if r["color"] == color:
                 r["final_success"] = final  # この色が、やり直しも含めて最終的に成功したか
     return records
+
+
+# ---- カメラの較正(手の目印を使う)----
+# 較正のために手を動かす位置 (x, y) [m]: 立方体を置く範囲の全体に、高さ(下の CALIB_Z)を 2 通り(目印の高さの違いが、カメラの高さと視野角を分ける手がかりになる)。
+CALIB_XY = [(0.14, -0.12), (0.14, 0.04), (0.20, -0.12), (0.20, 0.0), (0.20, 0.06), (0.26, -0.10), (0.26, 0.0), (0.24, 0.06)]
+CALIB_Z = (0.03, 0.08)  # 手先(gripperframe)の高さ。これより高いと、手を真下に向けたままでは、手首が可動域の端に届かず、IK が解けない
+
+
+def calibrate_overhead_camera(model, renderer, belief_pos, belief_fovy, noise_px=0.0, rng=None, marker_pos_err=(0.0, 0.0, 0.0)):
+    """手の目印を使って、真上のカメラの位置と視野角を求める。(カメラの位置の「信じている値」は、出発点としてだけ使う。)
+
+    手順(calibration.py の説明と同じ):
+      1. 手を、CALIB_XY × CALIB_Z の位置へ、指を真下に向けて動かす(関節角から、手の目印の世界座標が計算で分かる)。
+      2. その状態を撮影して、マゼンタの目印が画像のどの画素に写るかを測る。
+      3. 「カメラがこの位置・視野角なら、目印の世界座標は、この画素に写るはず」の計算と、実際の画素の差が最小になる位置・視野角を探す。
+    腕は physics で動かさず、qpos を直接書いて姿勢を作る(較正に必要なのは、姿勢が分かることだけ)。
+    戻り値: (カメラの位置 (x, y, z), 視野角 [度], 再投影誤差 rms [画素], 使えた点の数)。
+    belief_pos, belief_fovy: 探索の出発点(だいたいの見当。実機なら、定規で測ったカメラの位置)。
+    noise_px: 目印の画素位置に足すランダムなずれ(標準偏差、画素)。
+    marker_pos_err: 目印の世界座標に足す、一定のずれ [m]。実機で、手の目印の位置を測り間違えた(または、腕が計算どおりの位置に来ない)状況を再現する。
+    """
+    data = mujoco.MjData(model)
+    marker_id = model.site("hand_marker_site").id
+    R = grasp_rotation(0.0)  # 手を真下に向けた向き(目印が、真上から見える向き)
+    points, pixels = [], []
+    q = np.array(HOME_Q, dtype=float)
+    for (x, y), z in [(xy, z) for z in CALIB_Z for xy in CALIB_XY]:
+        q, ok = solve_ik_pose(model, data, [x, y, z], R, q)
+        if not ok:
+            continue
+        data.qpos[:5] = q
+        mujoco.mj_forward(model, data)
+        renderer.update_scene(data, camera="overhead")
+        mask = _largest_component(color_mask(renderer.render(), "magenta"))
+        if mask is None or mask.sum() < 10:  # 目印が、腕の陰などで見えない点は飛ばす
+            continue
+        v_idx, u_idx = np.nonzero(mask)
+        u, v = (u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2
+        if noise_px > 0:
+            u, v = u + rng.normal(0, noise_px), v + rng.normal(0, noise_px)
+        points.append(data.site_xpos[marker_id] + marker_pos_err)  # 目印の世界座標(関節角から計算。カメラの位置に依存しない)。+ で新しい配列ができる
+        pixels.append((u, v))
+    cam_pos, fovy, rms = calibrate_camera(np.array(points), np.array(pixels), IMG_W, IMG_H, belief_pos, belief_fovy)
+    return cam_pos, fovy, rms, len(points)

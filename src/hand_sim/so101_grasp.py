@@ -41,9 +41,13 @@ GRIP_TORQUE_MAX = 0.3
 # 接触の硬さ(solref の「時定数」[秒])。小さいほど硬い。既定は 0.02 で、軽い物体(20 g)との接触だと、とても柔らかくなり、めり込む。
 # 時間刻み(0.002 秒)の 2 倍以上でないと、計算が不安定になる。
 CONTACT_TIMECONST = 0.004
+# 手の目印(較正用)。gripperframe の座標系 [m] での位置と、球の半径。手を真下に向けたとき、x が負 = 手首の側 = 上、z = 指の開閉の向きに出た位置になる。
+# 位置は、手の上や横に付けて試した 6 通りのうち、手を真下に向けた 12 の姿勢の全部で、真上のカメラから見えた位置(腕や手の陰に隠れにくい位置)。
+MARKER_IN_SITE = np.array([-0.04, 0.0, 0.075])
+MARKER_RADIUS = 0.009
 
 
-def load_grasp_model(xml_path, cube_geoms=("cube_geom",)):
+def load_grasp_model(xml_path, cube_geoms=("cube_geom",), hand_marker=False):
     """シーンを読み込み、gripper の指の当たり判定を「指の先の細い板」だけに作り直した model を返す。
 
     なぜ要るか: MuJoCo は、メッシュどうしの接触を「凸包」(でこぼこを埋めて、出っ張りだけを結んだ形)で判定する。
@@ -52,6 +56,9 @@ def load_grasp_model(xml_path, cube_geoms=("cube_geom",)):
     やること: 元の指のメッシュの当たり判定を切り、指の先の板だけの頂点から、新しい当たり判定の形(これも凸包)を作って足す。
     板は、ほぼ凸な形なので、凸包にしても形が変わらない。
     cube_geoms: 掴む対象の立方体の geom の名前(接触を硬くする対象)。立方体が複数あるシーンでは、全部の名前を渡す。
+    hand_marker: True なら、手(gripper)にマゼンタ(赤紫)の小さな球の目印と、その位置を調べる site "hand_marker_site" を足す。
+                 カメラの較正で、「手の目印が画像のどこに写るか」と「関節角から計算した目印の位置」を比べるために使う。
+                 立方体の色(赤・緑・青)とは違う色にして、色検出が取り違えないようにしてある。当たり判定は無い(見た目だけ)。
     mujoco.MjSpec: XML を「編集できる設計図」として読み込む仕組み。[頻度] あまり使わない(読み込んだあとにモデルを編集したいときだけ)。
     """
     base = mujoco.MjModel.from_xml_path(str(xml_path))  # 頂点の位置を調べるための、編集前の model
@@ -85,6 +92,16 @@ def load_grasp_model(xml_path, cube_geoms=("cube_geom",)):
         spec.body(base.body(body_id).name).add_geom(
             name=name, type=mujoco.mjtGeom.mjGEOM_MESH, meshname=name, group=3, friction=BLADE_FRICTION,
             solref=[CONTACT_TIMECONST, 1])
+    if hand_marker:
+        # 目印の位置: gripperframe の座標系で MARKER_IN_SITE。手を真下に向けたとき、手の側面から上へ(真上のカメラから見える位置に)出る。
+        # spec に足す geom の位置は body(gripper)の座標系で書くので、編集前の model で、body の座標系に直しておく。
+        body = base.body("gripper")
+        world = site_pos + site_R @ MARKER_IN_SITE
+        local = (world - data.xpos[body.id]) @ data.xmat[body.id].reshape(3, 3)
+        gripper = spec.body("gripper")
+        gripper.add_geom(name="hand_marker", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[MARKER_RADIUS, 0, 0], pos=local.tolist(),
+                         rgba=[1, 0, 1, 1], contype=0, conaffinity=0, mass=1e-6)  # 当たり判定なし、ほぼ重さなし
+        gripper.add_site(name="hand_marker_site", pos=local.tolist(), size=[0.002, 0, 0])
     for name in cube_geoms:
         spec.geom(name).solref = [CONTACT_TIMECONST, 1]  # 立方体側も硬くする(接触は、2つの geom の値を混ぜて決まる)
     spec.actuator("gripper").forcerange = [-GRIP_TORQUE_MAX, GRIP_TORQUE_MAX]  # 挟む力の上限

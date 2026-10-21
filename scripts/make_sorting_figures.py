@@ -19,10 +19,11 @@ plt.rcParams["font.family"] = "Noto Sans CJK JP"  # 日本語の文字化け(□
 plt.rcParams["axes.unicode_minus"] = False
 OUT = ROOT / "docs" / "img"
 CLASSES = ["未検出", "到達不可", "把持失敗", "運搬中の落下", "置き場の外"]
-# 表示する条件: (ファイル名の tag, 図の目盛りの名前)。ファイルが無い条件は飛ばす。
+# 表示する条件: (ファイル名の tag, 図の目盛りの名前)。ファイルが無い条件は飛ばす。_cal は、較正してから試験した条件。
 CONDITIONS = [("baseline", "ずれなし"), ("camx5", "x 5 mm"), ("camx10", "x 10 mm"), ("camx15", "x 15 mm"), ("camx20", "x 20 mm"),
               ("camx30", "x 30 mm"), ("camy10", "y 10 mm"), ("camy20", "y 20 mm"), ("noise1", "ノイズ 1 画素"), ("noise2", "ノイズ 2 画素"),
-              ("noise4", "ノイズ 4 画素")]
+              ("noise4", "ノイズ 4 画素"), ("camx15_cal", "x 15 mm\n+較正"), ("camx20_cal", "x 20 mm\n+較正"), ("camx30_cal", "x 30 mm\n+較正"),
+              ("camy20_cal", "y 20 mm\n+較正"), ("noise4_cal", "ノイズ 4 画素\n+較正")]
 
 
 def load(tag):
@@ -47,13 +48,13 @@ x = np.arange(len(data))
 # (1) 成功率
 first = [100 * np.mean([r["success"] for r in rows if r["attempt"] == "1"]) for _, rows in data]
 final = [100 * np.mean([r["final_success"] for r in rows if r["attempt"] == "1"]) for _, rows in data]
-fig, ax = plt.subplots(figsize=(11, 4.2))
+fig, ax = plt.subplots(figsize=(13, 4.4))
 ax.bar(x - 0.2, first, 0.4, color="#d62728", label="1 回目で成功")
 ax.bar(x + 0.2, final, 0.4, color="#1f77b4", label="やり直しも含めて成功")
 for i, (a, b) in enumerate(zip(first, final)):
     ax.text(i - 0.2, a + 1, f"{a:.0f}", ha="center", fontsize=8)
     ax.text(i + 0.2, b + 1, f"{b:.0f}", ha="center", fontsize=8)
-ax.set_xticks(x, labels, rotation=20)
+ax.set_xticks(x, labels, rotation=20, fontsize=8)
 ax.set_ylabel("成功率 [%](立方体 102 個あたり)")
 ax.set_ylim(0, 125)
 ax.set_title("条件ごとの成功率(カメラの位置のずれ・画像のノイズを変えた)")
@@ -71,7 +72,7 @@ for cls, col in zip(CLASSES, colors):
     counts = np.array([sum(r["fail_class"] == cls for r in rows) for _, rows in data])
     ax.bar(x, counts, 0.6, bottom=bottom, color=col, label=cls)
     bottom += counts
-ax.set_xticks(x, labels, rotation=20)
+ax.set_xticks(x, labels, rotation=20, fontsize=8)
 ax.set_ylabel("失敗の回数(試行ごと)")
 ax.set_title("失敗の内訳")
 ax.legend(fontsize=9)

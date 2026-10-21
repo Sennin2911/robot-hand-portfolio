@@ -3,6 +3,7 @@
     置き場の薄い色を、立方体と取り違えない(3 色とも、見つけた位置が立方体の位置で、置き場の位置ではない)。
 (2) 視野の外へ出した立方体は、見つからない(None が返る)。
 (3) 1 エピソード(3 個)で、全部が成功して、それぞれの置き場に入る。記録の中身(失敗の種類の欄、所要時間)が入っている。
+(4) カメラの位置を 30 mm ずれて信じていても、手の目印で較正すると、位置の認識の誤差が 3 mm 未満に戻り、1 エピソードが全部成功する。
 全部通れば終了コード0、そうでなければ1。
 """
 import os
@@ -19,8 +20,8 @@ if sys.platform == "linux":
 import mujoco  # noqa: E402
 import numpy as np  # noqa: E402
 from hand_sim.sorting import (  # noqa: E402
-    COLORS, IMG_H, IMG_W, ZONES, detect_cubes, load_sort_model, new_episode, random_layout, run_episode,
-    true_cube_pose, yaw_error_deg,
+    COLORS, IMG_H, IMG_W, ZONES, calibrate_overhead_camera, detect_cubes, load_sort_model, new_episode, random_layout,
+    run_episode, true_cube_pose, yaw_error_deg,
 )
 
 model = load_sort_model(ROOT / "models" / "so101" / "scene_sort.xml")
@@ -63,6 +64,23 @@ for r in records:
 good = good and all(r["final_err_mm"] < 30 and r["cycle_s"] > 0 for r in records)
 n_ng += not good
 print(f"{'OK' if good else 'NG'}  3 個とも成功し、置き場の中に入った")
+
+print("--- (4) カメラの位置が 30 mm ずれて信じていても、較正で戻る ---")
+cam = model.camera("overhead")
+true_pos, true_fovy = np.array(cam.pos), float(model.cam_fovy[cam.id])
+est_pos, est_fovy, rms, n_used = calibrate_overhead_camera(model, renderer, true_pos + [0.03, 0.0, 0.0], true_fovy)
+errs = []
+for _ in range(10):
+    data = new_episode(model, random_layout(rng))
+    found = detect_cubes(model, data, renderer, cam_model=(est_pos, est_fovy))
+    errs += [np.linalg.norm(np.array(found[c][:2]) - true_cube_pose(model, data, c)[0]) * 1000 for c in COLORS]
+good = n_used >= 8 and max(errs) < 3.0
+n_ng += not good
+print(f"{'OK' if good else 'NG'}  較正に使えた目印 {n_used} 点、認識の誤差 平均 {np.mean(errs):.2f} mm・最大 {max(errs):.2f} mm(較正なしなら 30 mm)")
+records = run_episode(model, renderer, np.random.default_rng(2), (0.03, 0.0), cam_model=(est_pos, est_fovy))
+good = all(r["success"] for r in records)
+n_ng += not good
+print(f"{'OK' if good else 'NG'}  較正した上で、1 エピソード(3 個)が全部成功する")
 
 renderer.close()  # 描画用の GL の部品を、終了前に明示的に片づける(しないと、終了時に EGL の警告が出ることがある)
 print("全部OK" if n_ng == 0 else f"NG が {n_ng} 件")

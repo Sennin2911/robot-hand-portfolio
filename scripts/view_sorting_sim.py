@@ -7,9 +7,10 @@
     .venv/bin/python scripts/view_sorting_sim.py --list                 # 条件の一覧
     .venv/bin/python scripts/view_sorting_sim.py                        # 既定: baseline(ずれなし)
     .venv/bin/python scripts/view_sorting_sim.py camx15                 # カメラの位置が x に 15 mm ずれた条件
+    .venv/bin/python scripts/view_sorting_sim.py camx15_cal             # 同じずれを、較正(手の目印でカメラの位置を求め直す)してから仕分け
     .venv/bin/python scripts/view_sorting_sim.py camy20 --seed 3        # 配置を変える(--seed が違うと、立方体の置き方が変わる)
     .venv/bin/python scripts/view_sorting_sim.py camx15 --speed 3       # 3 倍の速さ(1 エピソードは、実時間で約 1 分かかる)
-    .venv/bin/python scripts/view_sorting_sim.py --cam-err-mm 12 -8 --noise-px 1   # 条件を自分で指定
+    .venv/bin/python scripts/view_sorting_sim.py --cam-err-mm 12 -8 --noise-px 1 --calibrate   # 条件を自分で指定
 """
 import argparse
 import os
@@ -27,12 +28,16 @@ if sys.platform == "linux":
 import mujoco  # noqa: E402
 import mujoco.viewer  # noqa: E402
 import numpy as np  # noqa: E402
-from hand_sim.sorting import IMG_H, IMG_W, load_sort_model, new_episode, random_layout, run_episode  # noqa: E402
+from hand_sim.sorting import IMG_H, IMG_W, calibrate_overhead_camera, load_sort_model, new_episode, random_layout, run_episode  # noqa: E402
 
-# 条件の名前 → (カメラの位置のずれ x, y [mm]、画素ノイズ [画素])。run_sorting_trials.py で測った条件と同じ。
+# 条件の名前 → (カメラの位置のずれ x, y [mm]、画素ノイズ [画素]、較正するか)。run_sorting_trials.py で測った条件と同じ。
+# 名前の末尾の _cal は「較正あり」(手の目印でカメラの位置を求め直してから仕分ける)。
 CONDITIONS = {
-    "baseline": (0, 0, 0), "camx5": (5, 0, 0), "camx10": (10, 0, 0), "camx15": (15, 0, 0), "camx20": (20, 0, 0), "camx30": (30, 0, 0),
-    "camy10": (0, 10, 0), "camy20": (0, 20, 0), "noise1": (0, 0, 1), "noise2": (0, 0, 2), "noise4": (0, 0, 4),
+    "baseline": (0, 0, 0, False), "camx5": (5, 0, 0, False), "camx10": (10, 0, 0, False), "camx15": (15, 0, 0, False),
+    "camx20": (20, 0, 0, False), "camx30": (30, 0, 0, False), "camy10": (0, 10, 0, False), "camy20": (0, 20, 0, False),
+    "noise1": (0, 0, 1, False), "noise2": (0, 0, 2, False), "noise4": (0, 0, 4, False),
+    "camx15_cal": (15, 0, 0, True), "camx20_cal": (20, 0, 0, True), "camx30_cal": (30, 0, 0, True), "camy20_cal": (0, 20, 0, True),
+    "noise2_cal": (0, 0, 2, True), "noise4_cal": (0, 0, 4, True),
 }
 
 parser = argparse.ArgumentParser()
@@ -42,23 +47,32 @@ parser.add_argument("--seed", type=int, default=0, help="乱数の種(立方体�
 parser.add_argument("--speed", type=float, default=1.0, help="再生の速さ(1 = 実時間)")
 parser.add_argument("--cam-err-mm", type=float, nargs=2, metavar=("DX", "DY"), help="条件を上書き: カメラの位置のずれ [mm]")
 parser.add_argument("--noise-px", type=float, help="条件を上書き: 画素ノイズ [画素]")
+parser.add_argument("--calibrate", action="store_true", help="条件を上書き: 較正してから仕分ける")
 args = parser.parse_args()
 
 if args.list:
-    for name, (dx, dy, noise) in CONDITIONS.items():
-        print(f"{name:9s} カメラのずれ x={dx:2d} mm, y={dy:2d} mm / ノイズ {noise} 画素")
+    for name, (dx, dy, noise, cal) in CONDITIONS.items():
+        print(f"{name:11s} カメラのずれ x={dx:2d} mm, y={dy:2d} mm / ノイズ {noise} 画素 / 較正 {'あり' if cal else 'なし'}")
     sys.exit(0)
 
-dx, dy, noise = CONDITIONS[args.condition]
+dx, dy, noise, calibrate = CONDITIONS[args.condition]
 if args.cam_err_mm is not None:
     dx, dy = args.cam_err_mm
 if args.noise_px is not None:
     noise = args.noise_px
-print(f"条件: {args.condition}(カメラのずれ x={dx:g} mm, y={dy:g} mm / ノイズ {noise:g} 画素)、配置の種 {args.seed}")
+calibrate = calibrate or args.calibrate
+print(f"条件: {args.condition}(カメラのずれ x={dx:g} mm, y={dy:g} mm / ノイズ {noise:g} 画素 / 較正 {'あり' if calibrate else 'なし'})、配置の種 {args.seed}")
 
 model = load_sort_model(ROOT / "models" / "so101" / "scene_sort.xml")
 renderer = mujoco.Renderer(model, IMG_H, IMG_W)
 rng = np.random.default_rng(args.seed)
+cam_model = None  # None のときは、カメラのずれをそのまま信じる
+if calibrate:
+    cam = model.camera("overhead")
+    true_pos, true_fovy = np.array(cam.pos), float(model.cam_fovy[cam.id])
+    est_pos, est_fovy, rms, n_used = calibrate_overhead_camera(model, renderer, true_pos + [dx / 1000, dy / 1000, 0.0], true_fovy, noise, rng)
+    cam_model = (est_pos, est_fovy)
+    print(f"較正: 手の目印 {n_used} 点 → カメラの位置の差 x,y = {np.linalg.norm(est_pos[:2] - true_pos[:2]) * 1000:.2f} mm、視野角 {est_fovy:.2f}°(本当の値 {true_fovy:.0f}°)")
 # ビューアを開く時点で data が要るので、立方体をランダムに置いた data を、ここで作って run_episode に渡す。
 data = new_episode(model, random_layout(rng))
 
@@ -116,7 +130,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
 
     print("再生中...(1 エピソード = 3 個。終わっても、ウィンドウは開いたまま。閉じると終了)")
     viewer.sync()
-    records = run_episode(model, renderer, rng, (dx / 1000, dy / 1000), noise, 1, on_step, on_detect, on_record, data)
+    records = run_episode(model, renderer, rng, (dx / 1000, dy / 1000), noise, 1, on_step, on_detect, on_record, data, cam_model)
     n_ok = sum(r["final_success"] for r in records if r["attempt"] == 1)
     print(f"このエピソードの結果: 3 個のうち、最終的に成功 {n_ok} 個")
     show_marker(None)
