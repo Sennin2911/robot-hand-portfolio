@@ -4,7 +4,10 @@ A4 を横に使い、1 マス 25.0 mm の 10 × 7 マス(内側の角は 9 × 6 
 
 使い方(この .venv で実行):
     .venv/bin/python scripts/make_chessboard.py            # outputs/chessboard_A4.pdf と .png を作る
+    .venv/bin/python scripts/make_chessboard.py --screen 1920 1080   # 別のパソコンの画面に映す用の画像(画面の解像度と同じ大きさの PNG)を作る
+画面に映す場合の注意は docs/webcam_calibration.md を参照。--screen のときは、紙の PDF は作らない。
 """
+import argparse
 from pathlib import Path
 
 import cv2
@@ -16,6 +19,29 @@ import numpy as np  # noqa: E402
 from matplotlib.patches import Rectangle  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[1]
+COLS_S, ROWS_S = 10, 7  # 画面用の盤のマスの数(紙と同じ)
+parser = argparse.ArgumentParser()
+parser.add_argument("--screen", type=int, nargs=2, metavar=("W", "H"), help="画面に映す用の画像を作る。画面の解像度(幅 高さ。画素)を指定する")
+parser.add_argument("--square", type=int, default=None, help="--screen のときの、1 マスの大きさ [画素]。省略すると、画面の 8 割に収まる最大の整数")
+args = parser.parse_args()
+
+if args.screen:
+    # 画面に映す用: 白い背景の中央に、10 × 7 マスの盤を置いた画像を作る。1 マスは、整数の画素数(中間の色のにじみを避けるため。画面で、100% の大きさで映すこと)。
+    sw, sh = args.screen
+    sq = args.square or int(min(sw * 0.8 / COLS_S, sh * 0.8 / ROWS_S))
+    img = np.full((sh, sw), 255, np.uint8)
+    x0s, y0s = (sw - COLS_S * sq) // 2, (sh - ROWS_S * sq) // 2
+    for r in range(ROWS_S):
+        for c in range(COLS_S):
+            if (r + c) % 2 == 0:
+                img[y0s + r * sq:y0s + (r + 1) * sq, x0s + c * sq:x0s + (c + 1) * sq] = 0
+    out = ROOT / "outputs" / f"chessboard_screen_{sw}x{sh}.png"
+    out.parent.mkdir(exist_ok=True)
+    cv2.imwrite(str(out), img)
+    found, corners = cv2.findChessboardCorners(img, (COLS_S - 1, ROWS_S - 1))
+    print(f"作成: {out.relative_to(ROOT)}(画面 {sw} × {sh}、1 マス {sq} 画素、盤 {COLS_S * sq} × {ROWS_S * sq} 画素)。OpenCV で角 {COLS_S - 1} × {ROWS_S - 1} 個が見つかる: {found}")
+    raise SystemExit(0)
+
 plt.rcParams["font.family"] = "Noto Sans CJK JP"  # 日本語の文字化け(□□□)を避けるフォント指定
 COLS, ROWS, SQUARE = 10, 7, 25.0  # マスの数(横、縦)と、1 マスの大きさ [mm]。内側の角は (COLS − 1) × (ROWS − 1) = 9 × 6 個
 PAGE_W, PAGE_H = 297.0, 210.0  # A4 を横に使う [mm]
