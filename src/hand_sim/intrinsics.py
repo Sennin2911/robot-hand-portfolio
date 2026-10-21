@@ -29,7 +29,9 @@ def find_corners(image):
     if not found:
         return None
     # cornerSubPix: 角の位置を、1 画素より細かい精度(サブピクセル)に直す。較正の精度は、ここで決まる。
-    return cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
+    refined = cv2.cornerSubPix(gray, corners, (11, 11), (-1, -1), (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 30, 0.001))
+    # OpenCV のバージョンで、戻り値の形が違う(4.x は 54 × 1 × 2、5.x は 54 × 2)ので、54 × 1 × 2 の float32 にそろえる。
+    return np.asarray(refined, dtype=np.float32).reshape(-1, 1, 2)
 
 
 def calibrate_intrinsics(corner_list, image_size):

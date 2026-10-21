@@ -53,5 +53,6 @@ found, corners = cv2.findChessboardCorners(img, (COLS - 1, ROWS - 1))
 print(f"作成: {pdf.relative_to(ROOT)}、{png.relative_to(ROOT)}")
 print(f"OpenCV で、内側の角 {COLS - 1} × {ROWS - 1} 個が見つかる: {found}(角の数 {0 if corners is None else len(corners)})")
 if found:
-    spacing = np.linalg.norm(corners[1, 0] - corners[0, 0])  # 隣り合う角の間隔 [画素]
+    pts = corners.reshape(-1, 2)  # OpenCV のバージョンで、形が違うので、54 × 2 にそろえる
+    spacing = np.linalg.norm(pts[1] - pts[0])  # 隣り合う角の間隔 [画素]
     print(f"角の間隔 {spacing:.1f} 画素(200 dpi で 25 mm = {25 / MM * 200:.1f} 画素)")
