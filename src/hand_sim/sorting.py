@@ -200,6 +200,7 @@ def collect_hand_marker_samples(model, renderer, noise_px=0.0, rng=None, marker_
     """
     data = mujoco.MjData(model)
     marker_id = model.site("hand_marker_site").id
+    import hand_sim.so101_grasp as grasp  # ARM_ERROR(試験用の腕のずれ)の「今の値」を読むため。from import だと、設定前の値が固定される
     points, pixels = [], []
     q = np.array(HOME_Q, dtype=float)
     for yaw_deg, (x, y), z in [(yaw, xy, z) for yaw in yaws_deg for z in CALIB_Z for xy in CALIB_XY]:
@@ -209,6 +210,9 @@ def collect_hand_marker_samples(model, renderer, noise_px=0.0, rng=None, marker_
             continue
         data.qpos[:5] = q
         mujoco.mj_forward(model, data)
+        marker_world = data.site_xpos[marker_id].copy()  # 目印の世界座標は、「指令した関節角 q」から計算する(ロボットが信じている位置)
+        data.qpos[:5] = q + grasp.ARM_ERROR  # 実際の腕は、指令からずれた姿勢になる(通常は 0 なので、同じ)。カメラが見るのは、実際の姿勢
+        mujoco.mj_forward(model, data)
         renderer.update_scene(data, camera=camera)
         mask = _largest_component(color_mask(renderer.render(), "magenta"))
         if mask is None or mask.sum() < 10:  # 目印が見えない点は飛ばす
@@ -217,7 +221,7 @@ def collect_hand_marker_samples(model, renderer, noise_px=0.0, rng=None, marker_
         u, v = (u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2
         if noise_px > 0:
             u, v = u + rng.normal(0, noise_px), v + rng.normal(0, noise_px)
-        points.append(data.site_xpos[marker_id] + marker_pos_err)  # 関節角から計算した目印の世界座標。+ で新しい配列ができる
+        points.append(marker_world + marker_pos_err)  # 指令した関節角から計算した目印の世界座標。+ で新しい配列ができる
         pixels.append((u, v))
     return np.array(points), np.array(pixels)
 
