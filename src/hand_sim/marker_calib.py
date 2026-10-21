@@ -192,3 +192,46 @@ def estimate_arm_offsets_multi(model, renderer, cam_pos, fovy_deg, sites=LINK_SI
     delta = np.zeros(5)
     delta[idx] = sol.x
     return np.degrees(delta), float(np.sqrt(np.mean(sol.fun ** 2))), len(observations)
+
+
+def estimate_arm_offsets_from_poses(model, renderer, cam_pos, fovy_deg, poses, noise_px=0.0, rng=None, fit_joints=(0, 1, 2, 3, 4), min_pixels=30):
+    """指令する関節角のリスト poses(各 長さ 5 [rad])を使って、手の目印から腕の関節のずれ [度] を求める(estimate_arm_offsets の、姿勢を自由に選べる版)。
+
+    estimate_arm_offsets は、手を真下に向けた姿勢だけを使う。こちらは、1 関節ずつ動かす姿勢、ばらばらの姿勢など、どんな姿勢でも渡せる。
+    目印が見えない(隠れた)姿勢は飛ばす。戻り値: (ずれ [度]、再投影誤差 [画素]、使えた姿勢の数)。
+    """
+    import hand_sim.so101_grasp as grasp  # 試験用の腕のずれ ARM_ERROR の「今の値」を読む
+    data = mujoco.MjData(model)
+    marker_id = model.site("hand_marker_site").id
+    cam_pos = np.asarray(cam_pos, dtype=float)
+    used_q, pixels = [], []
+    for q in poses:
+        data.qpos[:5] = np.asarray(q) + grasp.ARM_ERROR  # 実際の腕の姿勢で撮影
+        mujoco.mj_forward(model, data)
+        renderer.update_scene(data, camera="overhead")
+        mask = _largest_component(color_mask(renderer.render(), "magenta"))
+        if mask is None or mask.sum() < min_pixels:
+            continue
+        v_idx, u_idx = np.nonzero(mask)
+        u, v = (u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2
+        if noise_px > 0:
+            u, v = u + rng.normal(0, noise_px), v + rng.normal(0, noise_px)
+        used_q.append(np.asarray(q))
+        pixels.append((u, v))
+    pixels = np.array(pixels)
+    idx = list(fit_joints)
+
+    def residual(p):
+        delta = np.zeros(5)
+        delta[idx] = p
+        res = []
+        for q, pix in zip(used_q, pixels):
+            data.qpos[:5] = q + delta
+            mujoco.mj_forward(model, data)
+            res.extend(project(data.site_xpos[marker_id][None, :], cam_pos, fovy_deg, IMG_W, IMG_H)[0] - pix)
+        return np.array(res)
+
+    sol = least_squares(residual, np.zeros(len(idx)))
+    delta = np.zeros(5)
+    delta[idx] = sol.x
+    return np.degrees(delta), float(np.sqrt(np.mean(sol.fun ** 2))), len(used_q)
