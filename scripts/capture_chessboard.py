@@ -1,5 +1,6 @@
 """【概要】カメラの内部パラメータの較正に使う、チェスボードの画像を撮る。3 つの撮り方がある:
-  --test : 試しに撮る。Enter キーを押すたびに 1 枚撮り、角が見つかったか・明るさ・ぼけ・盤の大きさを表示して、outputs/chessboard_test.png に保存する(較正用には数えない)。
+  --test : 試しに撮る。Enter キーを押すたびに 1 枚撮り、角が見つかったか・明るさ・ぼけ・盤の大きさを表示して、outputs/chessboard_test.png に保存する。
+           **毎回、同じファイルに上書きされ、較正用の保存先(outputs/chessboard_shots/)には保存されない**(較正には使われない)。較正用の撮影は --enter。
            盤の持ち方・明るさ・照明の反射を、本番の前に確かめる用。q + Enter で終わる。
   --enter: 本番。Enter キーを押すたびに 1 枚撮る。角が見つかったものだけを保存して、数える。盤を動かす位置の指示が、ターミナルに出る。q + Enter で終わる。
   (どちらも付けない)本番。一定の間隔(既定 8 秒)で、自動で撮る。両手で盤を持つときは、こちらが楽。
@@ -92,6 +93,12 @@ class LatestFrame:
         self.thread.join(timeout=2)
 
 
+def next_shot_number(directory):
+    """directory にある shot_NN.png の、最大の番号 + 1 を返す(無ければ 1)。もう一度実行したときに、前の画像を上書きしないため。"""
+    numbers = [int(p.stem.split("_")[1]) for p in directory.glob("shot_*.png") if p.stem.split("_")[1].isdigit()]  # p.stem: 拡張子を除いたファイル名
+    return max(numbers, default=0) + 1
+
+
 def evaluate(frame):
     """1 枚のコマを調べて、(角, 表示する文) を返す。角は、見つかれば (54 × 1 × 2)、無ければ None。"""
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -120,7 +127,8 @@ try:
             print("  " + text)
     elif args.enter:
         saved = 0
-        print(f"本番(Enter で撮る)。角が見つかったものだけ数える。{args.shots} 枚で終わる(q + Enter で途中終了)。")
+        first = next_shot_number(out_dir)  # 前の実行で撮った画像の、続きの番号から保存する(上書きしない)
+        print(f"本番(Enter で撮る)。角が見つかったものだけ保存して、数える。この実行で {args.shots} 枚撮ると終わる(q + Enter で途中終了)。保存は shot_{first:02d}.png から。")
         while saved < args.shots:
             print(f"\n[{saved + 1}/{args.shots}] 次: {HINTS[saved % len(HINTS)]}")
             if input("盤を動かして止めたら、Enter > ").strip().lower() == "q":
@@ -129,11 +137,13 @@ try:
             corners, text = evaluate(frame)
             print("  " + text)
             if corners is not None:
+                name = f"shot_{first + saved:02d}.png"
                 saved += 1
-                cv2.imwrite(str(out_dir / f"shot_{saved:02d}.png"), frame)
-                print(f"  → 保存 shot_{saved:02d}.png")
+                cv2.imwrite(str(out_dir / name), frame)
+                print(f"  → 保存 {name}")
     else:
         saved, attempt = 0, 0
+        first = next_shot_number(out_dir)
         max_attempts = args.max_attempts or args.shots * 3
         print(f"{args.shots} 枚を、{args.interval:.0f} 秒ごとに自動で撮る(角が見つかったものだけ数える)。盤を、指示の位置へ動かして、撮影まで止めておく。")
         while saved < args.shots and attempt < max_attempts:
@@ -144,9 +154,10 @@ try:
             corners, text = evaluate(frame)
             print("  " + text)
             if corners is not None:
+                name = f"shot_{first + saved:02d}.png"
                 saved += 1
-                cv2.imwrite(str(out_dir / f"shot_{saved:02d}.png"), frame)
-                print(f"  → 保存 shot_{saved:02d}.png")
+                cv2.imwrite(str(out_dir / name), frame)
+                print(f"  → 保存 {name}")
         if saved < args.shots:
             print(f"\n撮影の上限({max_attempts} 回)に達した。角が見つかったのは {saved} 枚だけ")
 except (EOFError, KeyboardInterrupt):  # 入力が閉じた、または Ctrl+C

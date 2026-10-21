@@ -64,7 +64,7 @@
 .venv/bin/python scripts/check_webcam.py --manual --exposure 300 --gain 32     # 「明るさ 平均」が 100〜150 くらいが目安(この部屋では、300 で 103)
 ```
 暗ければ `--exposure` を大きく(1000 で 174、2000 で 207)、明るすぎれば小さくする。決まった値を、下の撮影にも同じに渡す。
-**試しに 1 枚撮る**(Enter キーで撮る。盤の持ち方・明るさ・反射を確かめる。較正用には数えない):
+**試しに 1 枚撮る**(Enter キーで撮る。盤の持ち方・明るさ・反射を確かめる。**毎回、`outputs/chessboard_test.png` に上書きされ、較正用の保存先 `outputs/chessboard_shots/` には保存されない。較正には使われない**):
 ```
 .venv/bin/python scripts/capture_chessboard.py --test --manual --exposure 300
 ```
@@ -75,6 +75,7 @@ Enter を押すたびに 1 枚撮り、「角が見つかったか」「明る�
 .venv/bin/python scripts/capture_chessboard.py --enter --manual --exposure 300   # Enter キーを押すたびに撮る(自分のペースで、20 枚)
 .venv/bin/python scripts/capture_chessboard.py --manual --exposure 300            # 8 秒ごとに、自動で撮る(両手で盤を持つとき)
 ```
+`--enter` は、**前の実行で撮った画像の、続きの番号**(shot_07.png の次は shot_08.png)から保存する。何回かに分けて撮っても、上書きされない。やり直したいときは、`outputs/chessboard_shots/` の画像を、自分で消す。
 (露出を固定した後、自動に戻すには: `v4l2-ctl -d /dev/video2 -c auto_exposure=3,white_balance_automatic=1`)
 ```
 .venv/bin/python scripts/capture_chessboard.py --manual --exposure 300        # 20 枚、8 秒おき。露出と色を固定する
