@@ -23,6 +23,8 @@
 3. sim で仕分けと試験(色違いの立方体2〜3種、ランダム配置、100回。失敗を分類してログに残す)
    → **完了(2026-10-22)**: `scripts/run_sorting_trials.py`(102 個、CSV を `outputs/sorting_*.csv` に出す)、`src/hand_sim/sorting.py`、`models/so101/scene_sort.xml`、解説と結果 `docs/sorting_trials.md`、
      答え合わせ `scripts/check_sorting.py`、図 `scripts/make_sorting_figures.py`。ずれなしは 102/102 成功。**カメラの位置が 15 mm 以上ずれると失敗する**(把持失敗)。工程4 の較正の目標は 10 mm 以内(できれば 5 mm)。
+     **較正を入れた試験(2026-10-22)**: 手(gripper)に目印を付け、関節角から分かる目印の位置と、画像の画素から、カメラの位置・視野角を求め直す(`sorting.calibrate_overhead_camera`)。
+     30 mm ずれていても 100% に戻った。限界: 較正の精度は、基準(手の目印)の位置の精度が上限(目印の位置の誤差が 1 対 1 で効く。実機の腕は工程1 で ±0.7 cm)。結果は `docs/sorting_trials.md` の 5 章、調査は `scripts/run_calibration_study.py`。
      副産物: 掴む位置を直して、見積もりが 14 mm ずれても掴めるようにした(`docs/grasp_basics.md`)。立方体の大きさは 25〜30 mm だけ掴める(20 mm 以下・35 mm 以上は未対応)。
 4. 実機に固定カメラを付けて通す(テーブル面で較正をやり直す)
 5. 実機で試験と分析(30〜50回、sim と失敗の内訳を比べる)
