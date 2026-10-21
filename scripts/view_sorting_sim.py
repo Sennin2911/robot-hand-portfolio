@@ -1,5 +1,6 @@
 """【概要】部品仕分けの試験(run_sorting_trials.py)の「条件ごとの動き」を、MuJoCo のビューア(ウィンドウ)で実時間のまま再生する。
-1 エピソード(3 色の立方体 3 個)ぶん。カメラで見つけた位置は、立方体の上に出る**マゼンタ(赤紫)の球**で示す。
+1 エピソード(3 色の立方体 3 個)ぶん。カメラで見つけた位置は、立方体の上に出る**水色(シアン)の球**で示す。
+(手の側面にあるマゼンタ(赤紫)の球は、別物: 手に付けた較正用の目印で、モデルの一部。水色の球は、画像から出した位置を示すだけの、ビューア上の表示。)
 カメラの位置がずれていると、球が立方体からずれて、指がずれた位置へ降りて、掴めない様子が見える。
 1 個ごとの結果(成功・失敗の種類、認識の誤差)は、ターミナルに出る。終わっても、ウィンドウは開いたまま(閉じると終了)。
 
@@ -88,7 +89,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
     step = [0]  # リストに入れるのは、中の関数 on_step から書き換えるため
 
     def show_marker(pos_xyz):
-        """見つけた位置に、マゼンタの球を 1 つ出す(viewer.user_scn: ビューアに追加で描く図形の置き場)。pos_xyz が None なら消す。"""
+        """見つけた位置に、水色(シアン)の球を 1 つ出す(viewer.user_scn: ビューアに追加で描く図形の置き場)。pos_xyz が None なら消す。"""
         with viewer.lock():  # ビューアが描画中に書き換えないよう、鍵をかける。[頻度] ビューアの表示を書き換えるときの定番
             scn = viewer.user_scn
             if pos_xyz is None:
@@ -96,7 +97,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 return
             # mjv_initGeom(図形, 種類, 大きさ, 位置, 向き(3×3 の単位行列を 9 つの並びにしたもの)、色 RGBA): 図形を 1 つ作る
             mujoco.mjv_initGeom(scn.geoms[0], int(mujoco.mjtGeom.mjGEOM_SPHERE), np.array([0.008, 0, 0]), np.asarray(pos_xyz, dtype=float),
-                                np.eye(3).flatten(), np.array([1.0, 0.0, 1.0, 0.9], dtype=np.float32))
+                                np.eye(3).flatten(), np.array([0.0, 1.0, 1.0, 0.9], dtype=np.float32))  # 水色(RGBA)。手の目印のマゼンタと区別する
             scn.ngeom = 1
 
     def on_step():
