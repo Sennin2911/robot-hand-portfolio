@@ -52,7 +52,7 @@ print("\n【実機で測って比べる値(sim の予測)】")
 print(f"  手先の高さ(机の面から)        : {tip[2] * 100:.1f} cm")
 print(f"  肩の回転軸から手先までの水平距離: {np.linalg.norm(d) * 100:.1f} cm")
 print(f"  肩の回転軸から見た向き          : 正面(前)から {np.degrees(np.arctan2(d[1], d[0])):+.1f} 度(+ は左)")
-print("  (手先 = グリッパの2つの指のつけ根あたりの点 gripperframe。指先ではない)")
+print("  (手先 = gripperframe = 固定側の指(動かない方の指)の先端。画像は scripts/render_sim_pose.py で見られる)")
 
 print("\n【手順】")
 print("  1) sim の画面で確認:")
