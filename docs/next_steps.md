@@ -21,6 +21,9 @@
    → **完了(2026-10-22)**: `src/hand_sim/so101_grasp.py`、`so101_ik.py` の `solve_ik_pose`(向きまで合わせる IK)、解説 `docs/grasp_basics.md`、答え合わせ `scripts/check_so101_grasp.py`(36 件 全OK)、
      画像 `scripts/render_grasp_sequence.py`。立方体の位置は sim の正解を使っている(カメラの認識は工程3 以降)。失敗の分類は、失敗が出る条件を作る工程3 で行う。
 3. sim で仕分けと試験(色違いの立方体2〜3種、ランダム配置、100回。失敗を分類してログに残す)
+   → **完了(2026-10-22)**: `scripts/run_sorting_trials.py`(102 個、CSV を `outputs/sorting_*.csv` に出す)、`src/hand_sim/sorting.py`、`models/so101/scene_sort.xml`、解説と結果 `docs/sorting_trials.md`、
+     答え合わせ `scripts/check_sorting.py`、図 `scripts/make_sorting_figures.py`。ずれなしは 102/102 成功。**カメラの位置が 15 mm 以上ずれると失敗する**(把持失敗)。工程4 の較正の目標は 10 mm 以内(できれば 5 mm)。
+     副産物: 掴む位置を直して、見積もりが 14 mm ずれても掴めるようにした(`docs/grasp_basics.md`)。立方体の大きさは 25〜30 mm だけ掴める(20 mm 以下・35 mm 以上は未対応)。
 4. 実機に固定カメラを付けて通す(テーブル面で較正をやり直す)
 5. 実機で試験と分析(30〜50回、sim と失敗の内訳を比べる)
 6. 改善を1サイクル回す(いちばん多い失敗に対策し、再試験して前後を比べる)
