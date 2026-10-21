@@ -188,39 +188,51 @@ CALIB_XY = [(0.14, -0.12), (0.14, 0.04), (0.20, -0.12), (0.20, 0.0), (0.20, 0.06
 CALIB_Z = (0.03, 0.08)  # 手先(gripperframe)の高さ。これより高いと、手を真下に向けたままでは、手首が可動域の端に届かず、IK が解けない
 
 
-def calibrate_overhead_camera(model, renderer, belief_pos, belief_fovy, noise_px=0.0, rng=None, marker_pos_err=(0.0, 0.0, 0.0)):
-    """手の目印を使って、真上のカメラの位置と視野角を求める。(カメラの位置の「信じている値」は、出発点としてだけ使う。)
+def collect_hand_marker_samples(model, renderer, noise_px=0.0, rng=None, marker_pos_err=(0.0, 0.0, 0.0), camera="overhead", yaws_deg=(0.0,)):
+    """手の目印の観測を集める: 手を CALIB_XY × CALIB_Z の位置へ、指を真下に向けて動かし、各位置で撮影する。
 
-    手順(calibration.py の説明と同じ):
-      1. 手を、CALIB_XY × CALIB_Z の位置へ、指を真下に向けて動かす(関節角から、手の目印の世界座標が計算で分かる)。
-      2. その状態を撮影して、マゼンタの目印が画像のどの画素に写るかを測る。
-      3. 「カメラがこの位置・視野角なら、目印の世界座標は、この画素に写るはず」の計算と、実際の画素の差が最小になる位置・視野角を探す。
-    腕は physics で動かさず、qpos を直接書いて姿勢を作る(較正に必要なのは、姿勢が分かることだけ)。
-    戻り値: (カメラの位置 (x, y, z), 視野角 [度], 再投影誤差 rms [画素], 使えた点の数)。
-    belief_pos, belief_fovy: 探索の出発点(だいたいの見当。実機なら、定規で測ったカメラの位置)。
-    noise_px: 目印の画素位置に足すランダムなずれ(標準偏差、画素)。
-    marker_pos_err: 目印の世界座標に足す、一定のずれ [m]。実機で、手の目印の位置を測り間違えた(または、腕が計算どおりの位置に来ない)状況を再現する。
+    戻り値: (points, pixels)。points = 目印の世界座標 (N×3、関節角から計算。カメラに依存しない)、pixels = 目印の画素 (N×2)。
+    目印が、腕の陰などで見えない位置は飛ばす。腕は physics で動かさず、qpos を直接書いて姿勢を作る(較正に必要なのは、姿勢が分かることだけ)。
+    noise_px: 画素に足すランダムなずれ(標準偏差)。marker_pos_err: 目印の世界座標に足す一定のずれ [m](測り間違いの再現)。
+    camera: 撮影するカメラの名前(既定は真上のカメラ。置き場所の調査では、同じ名前のカメラを、別の位置・向きに置き直して使う)。
+    yaws_deg: 手の向き(指が開閉する向きの角度、0° は世界の +x 向き)の候補。目印は手の片側に付いているので、カメラの反対側を向くと、手の陰に隠れる。
+              複数の向きで撮ると、どちら側のカメラからも、目印が見える位置が増える(wrist_roll の可動域の都合で、150° 程度まで)。
     """
     data = mujoco.MjData(model)
     marker_id = model.site("hand_marker_site").id
-    R = grasp_rotation(0.0)  # 手を真下に向けた向き(目印が、真上から見える向き)
     points, pixels = [], []
     q = np.array(HOME_Q, dtype=float)
-    for (x, y), z in [(xy, z) for z in CALIB_Z for xy in CALIB_XY]:
+    for yaw_deg, (x, y), z in [(yaw, xy, z) for yaw in yaws_deg for z in CALIB_Z for xy in CALIB_XY]:
+        R = grasp_rotation(np.radians(yaw_deg))  # 手を真下に向けた向き(指の開閉の向きが yaw_deg)
         q, ok = solve_ik_pose(model, data, [x, y, z], R, q)
         if not ok:
             continue
         data.qpos[:5] = q
         mujoco.mj_forward(model, data)
-        renderer.update_scene(data, camera="overhead")
+        renderer.update_scene(data, camera=camera)
         mask = _largest_component(color_mask(renderer.render(), "magenta"))
-        if mask is None or mask.sum() < 10:  # 目印が、腕の陰などで見えない点は飛ばす
+        if mask is None or mask.sum() < 10:  # 目印が見えない点は飛ばす
             continue
         v_idx, u_idx = np.nonzero(mask)
         u, v = (u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2
         if noise_px > 0:
             u, v = u + rng.normal(0, noise_px), v + rng.normal(0, noise_px)
-        points.append(data.site_xpos[marker_id] + marker_pos_err)  # 目印の世界座標(関節角から計算。カメラの位置に依存しない)。+ で新しい配列ができる
+        points.append(data.site_xpos[marker_id] + marker_pos_err)  # 関節角から計算した目印の世界座標。+ で新しい配列ができる
         pixels.append((u, v))
-    cam_pos, fovy, rms = calibrate_camera(np.array(points), np.array(pixels), IMG_W, IMG_H, belief_pos, belief_fovy)
+    return np.array(points), np.array(pixels)
+
+
+def calibrate_overhead_camera(model, renderer, belief_pos, belief_fovy, noise_px=0.0, rng=None, marker_pos_err=(0.0, 0.0, 0.0)):
+    """手の目印を使って、真上のカメラの位置と視野角を求める。(カメラの位置の「信じている値」は、出発点としてだけ使う。)
+
+    手順(calibration.py の説明と同じ):
+      1. 手を、CALIB_XY × CALIB_Z の位置へ、指を真下に向けて動かす(関節角から、手の目印の世界座標が計算で分かる)。
+      2. その状態を撮影して、マゼンタの目印が画像のどの画素に写るかを測る(collect_hand_marker_samples)。
+      3. 「カメラがこの位置・視野角なら、目印の世界座標は、この画素に写るはず」の計算と、実際の画素の差が最小になる位置・視野角を探す。
+    戻り値: (カメラの位置 (x, y, z), 視野角 [度], 再投影誤差 rms [画素], 使えた点の数)。
+    belief_pos, belief_fovy: 探索の出発点(だいたいの見当。実機なら、定規で測ったカメラの位置)。
+    noise_px、marker_pos_err: collect_hand_marker_samples と同じ。
+    """
+    points, pixels = collect_hand_marker_samples(model, renderer, noise_px, rng, marker_pos_err)
+    cam_pos, fovy, rms = calibrate_camera(points, pixels, IMG_W, IMG_H, belief_pos, belief_fovy)
     return cam_pos, fovy, rms, len(points)
