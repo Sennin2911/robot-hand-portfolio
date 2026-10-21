@@ -31,9 +31,9 @@ MOVED_MM = 5.0  # 他の立方体が、これ以上(mm)動いたら「他の立�
 FAIL_CLASSES = ("未検出", "到達不可", "把持失敗", "運搬中の落下", "置き場の外")
 
 
-def load_sort_model(xml_path):
+def load_sort_model(xml_path, link_markers=False):
     """仕分け用のシーンを読み込み、指の当たり判定を掴む用に作り直した model を返す(so101_grasp.load_grasp_model を使う)。"""
-    return load_grasp_model(xml_path, cube_geoms=tuple(f"cube_{c}_geom" for c in COLORS), hand_marker=True)
+    return load_grasp_model(xml_path, cube_geoms=tuple(f"cube_{c}_geom" for c in COLORS), hand_marker=True, link_markers=link_markers)
 
 
 def random_layout(rng):
@@ -188,6 +188,19 @@ def run_episode(model, renderer, rng, cam_err=(0.0, 0.0), noise_px=0.0, retries=
 # 較正のために手を動かす位置 (x, y) [m]: 立方体を置く範囲の全体に、高さ(下の CALIB_Z)を 2 通り(目印の高さの違いが、カメラの高さと視野角を分ける手がかりになる)。
 CALIB_XY = [(0.14, -0.12), (0.14, 0.04), (0.20, -0.12), (0.20, 0.0), (0.20, 0.06), (0.26, -0.10), (0.26, 0.0), (0.24, 0.06)]
 CALIB_Z = (0.03, 0.08)  # 手先(gripperframe)の高さ。これより高いと、手を真下に向けたままでは、手首が可動域の端に届かず、IK が解けない
+
+
+def calibration_poses(model, yaws_deg=(0.0,)):
+    """較正のために手を動かす姿勢(指令する関節角 q、長さ 5)のリストを、IK で作って返す。
+    手を、指を真下に向けて、CALIB_XY × CALIB_Z の位置へ。yaws_deg は、指の開閉の向き(手の向き)の候補。IK が解けない姿勢は、飛ばす。"""
+    data = mujoco.MjData(model)
+    poses = []
+    q = np.array(HOME_Q, dtype=float)
+    for yaw_deg, (x, y), z in [(yaw, xy, z) for yaw in yaws_deg for z in CALIB_Z for xy in CALIB_XY]:
+        q, ok = solve_ik_pose(model, data, [x, y, z], grasp_rotation(np.radians(yaw_deg)), q)
+        if ok:
+            poses.append(q.copy())
+    return poses
 
 
 def collect_hand_marker_samples(model, renderer, noise_px=0.0, rng=None, marker_pos_err=(0.0, 0.0, 0.0), camera="overhead", yaws_deg=(0.0,), with_q=False):

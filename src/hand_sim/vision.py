@@ -127,12 +127,18 @@ def bbox_to_center(bbox):
 # ---- 複数の色の立方体を見分けて、位置と向きを出す(部品仕分け用。新計画の工程3)----
 
 def color_mask(img, color):
-    """画像 img の中で、color ("red"、"green"、"blue"、手の目印の "magenta"、固定の目印の "cyan")の画素が True の配列(マスク)を返す。
+    """画像 img の中で、color ("red"、"green"、"blue"、手の目印の "magenta"、肘の "violet"、手首の "orange"、固定の目印の "cyan")の画素が True の配列(マスク)を返す。
     条件は「その色のチャンネルが大きく(100 超)、他の 2 つがその 0.4 倍未満」。置き場の薄い色(他のチャンネルも大きい)や、
     アームの黄色・黒は、この条件で除外される。"""
     if color == "magenta":  # 手の目印(赤と青が大きく、緑が小さい)。立方体の 3 色の条件には当てはまらない
         r, g, b = (img[:, :, c].astype(float) for c in range(3))
         return (r > 100) & (b > 100) & (g < 0.4 * np.minimum(r, b))
+    if color == "violet":  # 肘の目印(青が大きく、赤がその半分ほど、緑が小さい)。青い立方体(赤が小さい)とは、赤の大きさで見分ける
+        r, g, b = (img[:, :, c].astype(float) for c in range(3))
+        return (b > 100) & (r > 0.3 * b) & (r < 0.75 * b) & (g < 0.3 * b)
+    if color == "orange":  # 手首の目印(赤が大きく、緑がその半分ほど、青が小さい)。黄色いアーム(緑も大きい)、赤い立方体(緑が小さい)とは、緑の大きさで見分ける
+        r, g, b = (img[:, :, c].astype(float) for c in range(3))
+        return (r > 120) & (g > 0.3 * r) & (g < 0.7 * r) & (b < 0.25 * r)
     if color == "cyan":  # 固定の目印(緑と青が大きく、赤が小さい)。立方体の 3 色にも、手の目印にも、当てはまらない
         r, g, b = (img[:, :, c].astype(float) for c in range(3))
         return (g > 100) & (b > 100) & (r < 0.4 * np.minimum(g, b))

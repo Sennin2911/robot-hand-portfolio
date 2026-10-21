@@ -15,8 +15,8 @@ from scipy.optimize import least_squares
 
 from hand_sim.calibration import calibrate_camera, project
 from hand_sim.so101_grasp import HOME_Q
-from hand_sim.sorting import IMG_H, IMG_W, collect_hand_marker_samples, new_episode, random_layout
-from hand_sim.vision import color_mask
+from hand_sim.sorting import IMG_H, IMG_W, calibration_poses, collect_hand_marker_samples, new_episode, random_layout
+from hand_sim.vision import _largest_component, color_mask
 
 
 def fixed_marker_positions(model):
@@ -138,3 +138,57 @@ def calibrate_system(model, renderer, belief_offset=(0.03, 0.0, 0.0), noise_px=0
     delta, _, n_hand = estimate_arm_offsets(model, renderer, pos, fovy, yaws_deg=yaws_deg, noise_px=noise_px, rng=rng)
     return {"cam_model": (pos, fovy), "arm_offsets_deg": delta, "cam_err_mm": float(np.linalg.norm(pos[:2] - true_pos[:2]) * 1000),
             "n_fixed": n_fixed, "n_hand": n_hand}
+
+
+# (site の名前, 色)。肘・手首・手の目印(so101_grasp.load_grasp_model(link_markers=True))。色で、どの関節の目印かを見分ける。
+LINK_SITES = (("lower_arm_marker_site", "violet"), ("wrist_marker_site", "orange"), ("hand_marker_site", "magenta"))
+
+
+def estimate_arm_offsets_multi(model, renderer, cam_pos, fovy_deg, sites=LINK_SITES, yaws_deg=(0.0, 90.0), noise_px=0.0, rng=None, fit_joints=(0, 1, 2, 3, 4)):
+    """estimate_arm_offsets の、目印を複数(肘・手首・手)に増やした版。腕の関節のずれ [度](長さ 5)、再投影誤差 [画素]、使えた観測の数を返す。
+
+    なぜ増やすか: 手の目印だけだと、shoulder_lift・elbow_flex・wrist_flex が、手先を動かす向きが似ていて、見分けにくい。
+    肘の目印の位置は shoulder_lift のずれだけで、手首の目印の位置は shoulder_lift と elbow_flex のずれだけで決まる(手首より先の関節の影響を受けない)。
+    関節ごとに、「ここまでの関節のずれ」が直接見えるので、ずれを分けて求めやすくなる。
+    目印の見分け: 目印ごとに色が違う(sites の各要素が (site の名前, 色))ので、色の塊のうち一番大きいものを、その目印とする。
+    sites を 1 つにすれば、estimate_arm_offsets と同じ(手だけ、など)。全部の目印が見えた姿勢だけを使う。
+    """
+    data = mujoco.MjData(model)
+    import hand_sim.so101_grasp as grasp  # 試験用の腕のずれ ARM_ERROR の「今の値」を読む(from import だと、設定前の値が固定される)
+    site_ids = [model.site(n).id for n, _ in sites]
+    cam_pos = np.asarray(cam_pos, dtype=float)
+    observations = []  # (指令した関節角 q、[各目印の実際の画素])
+    for q in calibration_poses(model, yaws_deg):
+        data.qpos[:5] = q + grasp.ARM_ERROR  # 実際の腕の姿勢で撮影
+        mujoco.mj_forward(model, data)
+        renderer.update_scene(data, camera="overhead")
+        img = renderer.render()
+        pixels = []
+        for _, color in sites:
+            mask = _largest_component(color_mask(img, color))
+            if mask is None or mask.sum() < 30:  # 小さすぎる(隠れた)目印は使わない
+                break
+            v_idx, u_idx = np.nonzero(mask)
+            u, v = (u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2
+            if noise_px > 0:
+                u, v = u + rng.normal(0, noise_px), v + rng.normal(0, noise_px)
+            pixels.append((u, v))
+        if len(pixels) == len(sites):  # 全部の目印が見えた姿勢だけ使う
+            observations.append((q, pixels))
+    idx = list(fit_joints)
+
+    def residual(p):
+        delta = np.zeros(5)
+        delta[idx] = p
+        res = []
+        for q, pixels in observations:
+            data.qpos[:5] = q + delta
+            mujoco.mj_forward(model, data)
+            for sid, pixel in zip(site_ids, pixels):
+                res.extend(project(data.site_xpos[sid][None, :], cam_pos, fovy_deg, IMG_W, IMG_H)[0] - pixel)
+        return np.array(res)
+
+    sol = least_squares(residual, np.zeros(len(idx)))
+    delta = np.zeros(5)
+    delta[idx] = sol.x
+    return np.degrees(delta), float(np.sqrt(np.mean(sol.fun ** 2))), len(observations)

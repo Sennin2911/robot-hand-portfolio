@@ -45,9 +45,14 @@ CONTACT_TIMECONST = 0.004
 # 位置は、手の上や横に付けて試した 6 通りのうち、手を真下に向けた 12 の姿勢の全部で、真上のカメラから見えた位置(腕や手の陰に隠れにくい位置)。
 MARKER_IN_SITE = np.array([-0.04, 0.0, 0.075])
 MARKER_RADIUS = 0.009
+# 肘(body lower_arm、肘の軸が原点)と手首(body wrist、手首の軸が原点)に付ける目印の、各リンクの座標系 [m] での位置。
+# 関節の軸は、各リンクの座標系の z 軸なので、z 方向(= 軸に沿って、リンクの横へ)に出した位置にして、真上から見えるようにする。
+# 色は、目印ごとに変える(紫 = 肘、オレンジ = 手首、手は マゼンタ)。実機でも、目印ごとに色や ID を変えて、どの関節の目印かを見分ける。
+LINK_MARKERS = {"lower_arm": (0.0, 0.0, 0.045), "wrist": (0.0, 0.0, 0.045)}
+LINK_MARKER_RGBA = {"lower_arm": [0.55, 0.0, 1.0, 1], "wrist": [1.0, 0.5, 0.0, 1]}
 
 
-def load_grasp_model(xml_path, cube_geoms=("cube_geom",), hand_marker=False):
+def load_grasp_model(xml_path, cube_geoms=("cube_geom",), hand_marker=False, link_markers=False):
     """シーンを読み込み、gripper の指の当たり判定を「指の先の細い板」だけに作り直した model を返す。
 
     なぜ要るか: MuJoCo は、メッシュどうしの接触を「凸包」(でこぼこを埋めて、出っ張りだけを結んだ形)で判定する。
@@ -102,6 +107,13 @@ def load_grasp_model(xml_path, cube_geoms=("cube_geom",), hand_marker=False):
         gripper.add_geom(name="hand_marker", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[MARKER_RADIUS, 0, 0], pos=local.tolist(),
                          rgba=[1, 0, 1, 1], contype=0, conaffinity=0, mass=1e-6)  # 当たり判定なし、ほぼ重さなし
         gripper.add_site(name="hand_marker_site", pos=local.tolist(), size=[0.002, 0, 0])
+    if link_markers:
+        # 肘と手首の関節の近くにも、手の目印と違う色の球を付ける(腕のずれを、関節ごとに分けて測るため)。位置は、各リンクの座標系 LINK_MARKERS。
+        for body_name, local in LINK_MARKERS.items():
+            link = spec.body(body_name)
+            link.add_geom(name=f"{body_name}_marker", type=mujoco.mjtGeom.mjGEOM_SPHERE, size=[MARKER_RADIUS, 0, 0], pos=list(local),
+                          rgba=LINK_MARKER_RGBA[body_name], contype=0, conaffinity=0, mass=1e-6)
+            link.add_site(name=f"{body_name}_marker_site", pos=list(local), size=[0.002, 0, 0])
     for name in cube_geoms:
         spec.geom(name).solref = [CONTACT_TIMECONST, 1]  # 立方体側も硬くする(接触は、2つの geom の値を混ぜて決まる)
     spec.actuator("gripper").forcerange = [-GRIP_TORQUE_MAX, GRIP_TORQUE_MAX]  # 挟む力の上限
