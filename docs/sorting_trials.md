@@ -11,6 +11,22 @@
 | 試験の実行(条件を指定、CSV 出力、集計) | `scripts/run_sorting_trials.py` |
 | 答え合わせ | `scripts/check_sorting.py`(全 OK) |
 | 図の作成 | `scripts/make_sorting_figures.py` |
+| 条件ごとの動きを見る | `scripts/view_sorting_sim.py` |
+
+## 動きを見る方法(条件ごとに 1 パターン)
+ウィンドウで、実時間のまま再生する(マウスで視点を動かせる。1 エピソード = 3 個で、実時間で約 1〜1.5 分。終わっても、ウィンドウは開いたまま)。
+**見つけた位置に、マゼンタ(赤紫)の球**が出る。カメラの位置がずれた条件では、球が立方体からずれて、指がずれた位置へ降りる様子が見える。
+1 個ごとの結果は、ターミナルに出る。
+
+```
+.venv/bin/python scripts/view_sorting_sim.py --list          # 条件の一覧
+.venv/bin/python scripts/view_sorting_sim.py                 # baseline(ずれなし)
+.venv/bin/python scripts/view_sorting_sim.py camx5           # x に 5 mm   (camx10、camx15、camx20、camx30 も同様)
+.venv/bin/python scripts/view_sorting_sim.py camy20          # y に 20 mm  (camy10 も)
+.venv/bin/python scripts/view_sorting_sim.py noise4          # 画素ノイズ 4 画素(noise1、noise2 も)
+.venv/bin/python scripts/view_sorting_sim.py camx15 --seed 3 # 立方体の置き方を変える
+.venv/bin/python scripts/view_sorting_sim.py camx15 --speed 3 # 3 倍の速さ
+```
 
 ## 1. 試験の構成
 
