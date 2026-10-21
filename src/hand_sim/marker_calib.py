@@ -121,3 +121,20 @@ def estimate_arm_offsets(model, renderer, cam_pos, fovy_deg, yaws_deg=(0.0,), no
     delta = np.zeros(5)
     delta[idx] = sol.x
     return np.degrees(delta), float(np.sqrt(np.mean(sol.fun ** 2))), len(qs)
+
+
+def calibrate_system(model, renderer, belief_offset=(0.03, 0.0, 0.0), noise_px=0.0, board_err_mm=0.0, rng=None, yaws_deg=(0.0, 90.0)):
+    """固定の目印でカメラを較正し、そのカメラで手の目印を見て腕のずれを測る(1 → 2 の流れ)。結果を辞書で返す。
+
+    belief_offset: 「信じているカメラの位置」の、本当の位置からのずれ [m](較正の出発点)。
+    noise_px: 画素に足すランダムなずれ(標準偏差、画素)。board_err_mm: 固定の目印の位置の誤差(標準偏差 [mm]。目印ごとにばらつく。板の位置を測った誤差の再現)。
+    戻り値: {"cam_model": (位置, 視野角)、"arm_offsets_deg": 求めた腕のずれ(長さ 5)、"cam_err_mm": カメラの位置(x, y)の本当の値との差、"n_fixed": 使えた固定の目印の数、"n_hand": 使えた手の目印の数}。
+    使うときは、so101_grasp.set_arm_compensation(arm_offsets_deg) で補正し、cam_model を、仕分け(run_episode)に渡す。
+    """
+    cam = model.camera("overhead")
+    true_pos, true_fovy = np.array(cam.pos), float(model.cam_fovy[cam.id])
+    board_err = rng.normal(0, board_err_mm / 1000, (len(fixed_marker_positions(model)), 3)) if board_err_mm > 0 else None
+    pos, fovy, _, n_fixed = calibrate_from_fixed_markers(model, renderer, true_pos + np.asarray(belief_offset), true_fovy, noise_px, rng, board_err)
+    delta, _, n_hand = estimate_arm_offsets(model, renderer, pos, fovy, yaws_deg=yaws_deg, noise_px=noise_px, rng=rng)
+    return {"cam_model": (pos, fovy), "arm_offsets_deg": delta, "cam_err_mm": float(np.linalg.norm(pos[:2] - true_pos[:2]) * 1000),
+            "n_fixed": n_fixed, "n_hand": n_hand}

@@ -89,7 +89,7 @@ for name, pts in [("机の面だけ(高さ 0 の 9 点)", np.array([[x, y, 0.0] 
 print("(3) 固定の目印でカメラを較正 → 手の目印で腕のずれを測る → 補正して仕分け(sim の画像から。出発点は、カメラの位置 30 mm ずれ)")
 fixed_n = len(fixed_marker_positions(model))
 for label, arm_err in [("腕のずれ大", BIG), ("腕のずれ小", SMALL)]:
-    for noise, board_err_mm in [(0.0, 0.0), (0.5, 2.0)]:
+    for noise, board_err_mm in [(0.0, 0.0), (0.5, 2.0), (1.0, 4.0)]:
         rng_m = np.random.default_rng(1)
         grasp.set_arm_error(arm_err)
         grasp.set_arm_compensation(0)

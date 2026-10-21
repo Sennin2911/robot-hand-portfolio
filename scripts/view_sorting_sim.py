@@ -1,6 +1,6 @@
 """【概要】部品仕分けの試験(run_sorting_trials.py)の「条件ごとの動き」を、MuJoCo のビューア(ウィンドウ)で実時間のまま再生する。
-1 エピソード(3 色の立方体 3 個)ぶん。カメラで見つけた位置は、立方体の上に出る**水色(シアン)の球**で示す。
-(手の側面にあるマゼンタ(赤紫)の球は、別物: 手に付けた較正用の目印で、モデルの一部。水色の球は、画像から出した位置を示すだけの、ビューア上の表示。)
+1 エピソード(3 色の立方体 3 個)ぶん。カメラで見つけた位置は、立方体の上に出る**オレンジの球**で示す。
+(手の側面にあるマゼンタ(赤紫)の球は、手に付けた較正用の目印、机の上の水色の球は、固定の目印で、どちらもモデルの一部。オレンジの球は、画像から出した位置を示すだけの、ビューア上の表示。)
 カメラの位置がずれていると、球が立方体からずれて、指がずれた位置へ降りて、掴めない様子が見える。
 1 個ごとの結果(成功・失敗の種類、認識の誤差)は、ターミナルに出る。終わっても、ウィンドウは開いたまま(閉じると終了)。
 
@@ -12,6 +12,11 @@
     .venv/bin/python scripts/view_sorting_sim.py camy20 --seed 3        # 配置を変える(--seed が違うと、立方体の置き方が変わる)
     .venv/bin/python scripts/view_sorting_sim.py camx15 --speed 3       # 3 倍の速さ(1 エピソードは、実時間で約 1 分かかる)
     .venv/bin/python scripts/view_sorting_sim.py --cam-err-mm 12 -8 --noise-px 1 --calibrate   # 条件を自分で指定
+
+固定の目印での修正(カメラを固定の目印で較正 → 手の目印で腕の関節のずれを測る → 補正)の、3 パターン(腕の関節がずれている条件):
+    .venv/bin/python scripts/view_sorting_sim.py marker_ideal        # ノイズなし: 3 個とも成功
+    .venv/bin/python scripts/view_sorting_sim.py marker_noisy_ok     # ノイズあり(画素 1.0、目印の位置の誤差 4 mm): 成功する例
+    .venv/bin/python scripts/view_sorting_sim.py marker_noisy_fail   # 同じ大きさのノイズで、ノイズの出方が違い、失敗する例(腕のずれの推定が外れて、掴めない)
 """
 import argparse
 import os
@@ -29,6 +34,8 @@ if sys.platform == "linux":
 import mujoco  # noqa: E402
 import mujoco.viewer  # noqa: E402
 import numpy as np  # noqa: E402
+import hand_sim.so101_grasp as grasp  # noqa: E402
+from hand_sim.marker_calib import calibrate_system  # noqa: E402
 from hand_sim.sorting import IMG_H, IMG_W, calibrate_overhead_camera, load_sort_model, new_episode, random_layout, run_episode  # noqa: E402
 
 # 条件の名前 → (カメラの位置のずれ x, y [mm]、画素ノイズ [画素]、較正するか)。run_sorting_trials.py で測った条件と同じ。
@@ -41,10 +48,21 @@ CONDITIONS = {
     "noise2_cal": (0, 0, 2, True), "noise4_cal": (0, 0, 4, True),
 }
 
+# 固定の目印での修正の条件 → (画素ノイズ、固定の目印の位置の誤差の大きさ [mm]、較正のノイズの乱数の種、立方体の配置の乱数の種)。
+# 腕の関節は、(0, 3, −8, −4, 0)° ずれている(実機で測った、補正前の大きさ)。
+# noisy_ok と noisy_fail は、**同じ大きさのノイズ**(画素 1.0、固定の目印の位置の誤差 4 mm)で、ノイズの出方(乱数の種)だけが違う。
+# ノイズの出方によって、腕のずれの推定の誤差が、小さく収まる(ok: 0.4°)ことも、大きく外れる(fail: 3.7°)こともある。
+ARM_ERROR_DEG = (0, 3, -8, -4, 0)
+PIPELINES = {
+    "marker_ideal": (0.0, 0.0, 0, 100),
+    "marker_noisy_ok": (1.0, 4.0, 0, 100),
+    "marker_noisy_fail": (1.0, 4.0, 1, 101),
+}
+
 parser = argparse.ArgumentParser()
-parser.add_argument("condition", nargs="?", default="baseline", choices=list(CONDITIONS), help="条件の名前(--list で一覧)")
+parser.add_argument("condition", nargs="?", default="baseline", choices=[*CONDITIONS, *PIPELINES], help="条件の名前(--list で一覧)")
 parser.add_argument("--list", action="store_true", help="条件の一覧を出して終わる")
-parser.add_argument("--seed", type=int, default=0, help="乱数の種(立方体の置き方が変わる)")
+parser.add_argument("--seed", type=int, default=None, help="乱数の種(立方体の置き方が変わる。省略すると、条件ごとの既定の種)")
 parser.add_argument("--speed", type=float, default=1.0, help="再生の速さ(1 = 実時間)")
 parser.add_argument("--cam-err-mm", type=float, nargs=2, metavar=("DX", "DY"), help="条件を上書き: カメラの位置のずれ [mm]")
 parser.add_argument("--noise-px", type=float, help="条件を上書き: 画素ノイズ [画素]")
@@ -54,21 +72,36 @@ args = parser.parse_args()
 if args.list:
     for name, (dx, dy, noise, cal) in CONDITIONS.items():
         print(f"{name:11s} カメラのずれ x={dx:2d} mm, y={dy:2d} mm / ノイズ {noise} 画素 / 較正 {'あり' if cal else 'なし'}")
+    for name, (noise, board, _, _) in PIPELINES.items():
+        print(f"{name:17s} 腕の関節がずれている / 固定の目印で較正 + 手の目印で腕のずれを測って補正 / ノイズ {noise} 画素、固定の目印の位置の誤差 {board} mm")
     sys.exit(0)
 
-dx, dy, noise, calibrate = CONDITIONS[args.condition]
+pipeline = PIPELINES.get(args.condition)  # 固定の目印での修正の条件なら、(ノイズ, 目印の位置の誤差, 較正の種, 配置の種)。そうでなければ None
+dx, dy, noise, calibrate = CONDITIONS.get(args.condition, (0, 0, 0, False))
 if args.cam_err_mm is not None:
     dx, dy = args.cam_err_mm
 if args.noise_px is not None:
     noise = args.noise_px
 calibrate = calibrate or args.calibrate
-print(f"条件: {args.condition}(カメラのずれ x={dx:g} mm, y={dy:g} mm / ノイズ {noise:g} 画素 / 較正 {'あり' if calibrate else 'なし'})、配置の種 {args.seed}")
+layout_seed = args.seed if args.seed is not None else (pipeline[3] if pipeline else 0)
+if pipeline is None:
+    print(f"条件: {args.condition}(カメラのずれ x={dx:g} mm, y={dy:g} mm / ノイズ {noise:g} 画素 / 較正 {'あり' if calibrate else 'なし'})、配置の種 {layout_seed}")
 
 model = load_sort_model(ROOT / "models" / "so101" / "scene_sort.xml")
 renderer = mujoco.Renderer(model, IMG_H, IMG_W)
-rng = np.random.default_rng(args.seed)
+rng = np.random.default_rng(layout_seed)
 cam_model = None  # None のときは、カメラのずれをそのまま信じる
-if calibrate:
+if pipeline is not None:
+    pipe_noise, pipe_board, calib_seed, _ = pipeline
+    grasp.set_arm_error(ARM_ERROR_DEG)  # 腕の関節が、指令どおりでなく、ずれて動く(補正する前)
+    info = calibrate_system(model, renderer, noise_px=pipe_noise, board_err_mm=pipe_board, rng=np.random.default_rng(calib_seed))
+    grasp.set_arm_compensation(info["arm_offsets_deg"])  # 測った腕のずれを、制御側の補正にする
+    cam_model = info["cam_model"]
+    est = info["arm_offsets_deg"]
+    print(f"条件: {args.condition}(腕の関節が {ARM_ERROR_DEG}° ずれている。固定の目印で較正 + 手の目印で腕のずれを測って補正。画素ノイズ {pipe_noise} 画素、固定の目印の位置の誤差 {pipe_board} mm)、配置の種 {layout_seed}")
+    print(f"  カメラの較正(固定の目印 {info['n_fixed']} 個): 位置の誤差 {info['cam_err_mm']:.1f} mm")
+    print(f"  腕のずれの推定(手の目印 {info['n_hand']} 点): 推定 {np.round(est, 2)}° / 本当の値 {ARM_ERROR_DEG}° → 差の最大 {np.abs(est - np.array(ARM_ERROR_DEG)).max():.2f}°")
+elif calibrate:
     cam = model.camera("overhead")
     true_pos, true_fovy = np.array(cam.pos), float(model.cam_fovy[cam.id])
     est_pos, est_fovy, rms, n_used = calibrate_overhead_camera(model, renderer, true_pos + [dx / 1000, dy / 1000, 0.0], true_fovy, noise, rng)
@@ -89,7 +122,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
     step = [0]  # リストに入れるのは、中の関数 on_step から書き換えるため
 
     def show_marker(pos_xyz):
-        """見つけた位置に、水色(シアン)の球を 1 つ出す(viewer.user_scn: ビューアに追加で描く図形の置き場)。pos_xyz が None なら消す。"""
+        """見つけた位置に、オレンジの球を 1 つ出す(viewer.user_scn: ビューアに追加で描く図形の置き場)。pos_xyz が None なら消す。"""
         with viewer.lock():  # ビューアが描画中に書き換えないよう、鍵をかける。[頻度] ビューアの表示を書き換えるときの定番
             scn = viewer.user_scn
             if pos_xyz is None:
@@ -97,7 +130,7 @@ with mujoco.viewer.launch_passive(model, data) as viewer:
                 return
             # mjv_initGeom(図形, 種類, 大きさ, 位置, 向き(3×3 の単位行列を 9 つの並びにしたもの)、色 RGBA): 図形を 1 つ作る
             mujoco.mjv_initGeom(scn.geoms[0], int(mujoco.mjtGeom.mjGEOM_SPHERE), np.array([0.008, 0, 0]), np.asarray(pos_xyz, dtype=float),
-                                np.eye(3).flatten(), np.array([0.0, 1.0, 1.0, 0.9], dtype=np.float32))  # 水色(RGBA)。手の目印のマゼンタと区別する
+                                np.eye(3).flatten(), np.array([1.0, 0.5, 0.0, 0.9], dtype=np.float32))  # オレンジ(RGBA)。手の目印のマゼンタ、固定の目印の水色と区別する
             scn.ngeom = 1
 
     def on_step():

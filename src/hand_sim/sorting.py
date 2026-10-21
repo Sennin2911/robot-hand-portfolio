@@ -139,14 +139,16 @@ def run_attempt(model, data, renderer, color, cam_err=(0.0, 0.0), noise_px=0.0, 
             rec["final_err_mm"] = float(np.linalg.norm(final_xy - zone) * 1000)
             carry_ok = log["carried"][2] > 0.05 and np.linalg.norm(log["carried"][:2] - zone) < 0.03
             in_zone = bool(np.all(np.abs(final_xy - zone) < ZONE_HALF)) and data.xpos[model.body(f"cube_{color}").id][2] < 0.02
-            if log["lifted"][2] < 0.05:
+            # 成功の判定は「立方体が、自分の色の置き場に入ったか」(in_zone)を、最初に見る。持ち上げた高さの基準(5 cm)だけで失敗にすると、
+            # 指が立方体の低い所を掴んで、4.8 cm までしか上がらなくても、置き場まで運べた(= 掴めた)場合を、失敗にしてしまった。
+            if in_zone:
+                rec["success"] = True
+            elif log["lifted"][2] < 0.05:
                 rec["fail_class"] = "把持失敗"
             elif not carry_ok:
                 rec["fail_class"] = "運搬中の落下"
-            elif not in_zone:
-                rec["fail_class"] = "置き場の外"
             else:
-                rec["success"] = True
+                rec["fail_class"] = "置き場の外"
     rec["moved_others_mm"] = max([float(np.linalg.norm(true_cube_pose(model, data, c)[0] - p) * 1000) for c, p in others_before.items()] + [0.0])
     rec["cycle_s"] = data.time - t0
     return rec
