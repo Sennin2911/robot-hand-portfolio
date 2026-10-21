@@ -58,6 +58,12 @@ check(f"画像の中心 cx, cy = ({K[0, 2]:.1f}, {K[1, 2]:.1f})(本当の値 970
 check(f"歪み k1 = {dist[0]:.3f}(本当の値 -0.300、差 0.03 未満)", abs(dist[0] - (-0.30)) < 0.03)
 check(f"再投影誤差 {result['rms']:.2f} 画素(ノイズ 0.3 画素なので、0.5 未満)", result["rms"] < 0.5)
 print(f"  縦の視野角 {result['fovy_deg']:.1f}°、横の視野角 {result['fovx_deg']:.1f}°")
+# (3) 盤の傾きを、画像から正しく求められる(本当の傾きが分かっている 1 枚で確かめる)
+for deg in (0, 20, 35):
+    r = np.array([0.0, np.radians(deg), 0.0])  # y 軸まわりに deg 度
+    pts, _ = cv2.projectPoints(obj, r, np.array([0.0, 0.0, 0.6]), K_true, dist_true)
+    res = calibrate_intrinsics([pts.astype(np.float32).reshape(-1, 1, 2)] * 5 + [c for c in corner_list[:10]], (W, H))  # 先頭の 5 枚が、この盤(同じ画像の繰り返し)
+    check(f"盤の傾き {deg}° を、画像から求めた値 {res['tilt_deg'][0]:.1f}°(差 3° 未満)", abs(res["tilt_deg"][0] - deg) < 3.0)
 
 print("全部OK" if n_ng == 0 else f"NG が {n_ng} 件")
 sys.exit(0 if n_ng == 0 else 1)

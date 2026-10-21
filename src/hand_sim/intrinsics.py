@@ -38,17 +38,21 @@ def calibrate_intrinsics(corner_list, image_size):
     """角の見つかった画像ぶんの corner_list(find_corners の結果のリスト)と、画像の大きさ (幅, 高さ) から、内部パラメータを求める。
 
     戻り値: 辞書 {"K": カメラ行列(3×3)、"dist": 歪みの係数、"rms": 再投影誤差 [画素]、"per_image_rms": 画像ごとの誤差、"image_size": (幅, 高さ)、
-                  "fovy_deg": 縦の視野角、"fovx_deg": 横の視野角}。
+                  "fovy_deg": 縦の視野角、"fovx_deg": 横の視野角、"tilt_deg": 画像ごとの、盤の傾き [度]、"tilt_azimuth_deg": 傾いた向き [度]}。
     再投影誤差: 求めた内部パラメータで、盤の角を画像に投影し直したときの、実際の角の位置との差(二乗平均平方根)。1 画素より小さければ、良い較正。
     """
     objpoints = [object_points()] * len(corner_list)
     rms, K, dist, rvecs, tvecs = cv2.calibrateCamera(objpoints, corner_list, image_size, None, None)
-    per_image = []
+    per_image, tilts, azimuths = [], [], []
     for obj, img, rvec, tvec in zip(objpoints, corner_list, rvecs, tvecs):
         projected, _ = cv2.projectPoints(obj, rvec, tvec, K, dist)  # 求めた値で、角を画像に投影し直す
         per_image.append(float(np.sqrt(np.mean(np.sum((projected - img) ** 2, axis=2)))))
+        # 盤の傾き: 盤の面の法線(盤の座標の z 軸を、カメラの座標に直したもの)と、カメラの光軸(z 軸)の、なす角。0° = 盤がレンズに正対。
+        normal = cv2.Rodrigues(rvec)[0][:, 2]
+        tilts.append(float(np.degrees(np.arccos(min(1.0, abs(normal[2]))))))
+        azimuths.append(float(np.degrees(np.arctan2(normal[1], normal[0]))))  # 傾いた向き(画像の右 = 0°、下 = 90°)。法線の符号は、カメラへ向く側にそろえない(向きの目安)
     w, h = image_size
-    return {"K": K, "dist": dist.ravel(), "rms": float(rms), "per_image_rms": per_image, "image_size": (int(w), int(h)),
+    return {"K": K, "dist": dist.ravel(), "rms": float(rms), "per_image_rms": per_image, "tilt_deg": tilts, "tilt_azimuth_deg": azimuths, "image_size": (int(w), int(h)),
             "fovy_deg": fovy_deg(K, h), "fovx_deg": float(np.degrees(2 * np.arctan(w / (2 * K[0, 0]))))}
 
 
