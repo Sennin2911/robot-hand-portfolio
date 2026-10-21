@@ -1,15 +1,19 @@
-"""【概要】カメラの内部パラメータの較正に使う、チェスボードの画像を、一定の間隔で自動的に撮る。
-盤を、カメラの前で、色々な位置・距離・傾きに動かしながら、撮影の合図(音と、画面の表示)に合わせて、止める。
-撮った画像は、角(9 × 6 個)が見つかったものだけを保存する(outputs/chessboard_shots/。outputs/ は git に入らない)。
-ウィンドウは開かない(ターミナルに、撮れたか、次にどこへ盤を動かすかの指示が出る)。
+"""【概要】カメラの内部パラメータの較正に使う、チェスボードの画像を撮る。3 つの撮り方がある:
+  --test : 試しに撮る。Enter キーを押すたびに 1 枚撮り、角が見つかったか・明るさ・ぼけ・盤の大きさを表示して、outputs/chessboard_test.png に保存する(較正用には数えない)。
+           盤の持ち方・明るさ・照明の反射を、本番の前に確かめる用。q + Enter で終わる。
+  --enter: 本番。Enter キーを押すたびに 1 枚撮る。角が見つかったものだけを保存して、数える。盤を動かす位置の指示が、ターミナルに出る。q + Enter で終わる。
+  (どちらも付けない)本番。一定の間隔(既定 8 秒)で、自動で撮る。両手で盤を持つときは、こちらが楽。
+撮った画像は outputs/chessboard_shots/ に保存する(outputs/ は git に入らない)。ウィンドウは開かない(ターミナルだけで操作する)。
 
 使い方(この .venv で実行):
-    .venv/bin/python scripts/capture_chessboard.py                # 既定: 20 枚、8 秒おき
-    .venv/bin/python scripts/capture_chessboard.py --shots 25 --interval 6 --manual   # 25 枚、6 秒おき、露出と色を固定
+    .venv/bin/python scripts/capture_chessboard.py --test --manual --exposure 300       # 試しの撮影(Enter で撮る)
+    .venv/bin/python scripts/capture_chessboard.py --enter --manual --exposure 300      # 本番、Enter で撮る
+    .venv/bin/python scripts/capture_chessboard.py --manual --exposure 300 --interval 8 # 本番、8 秒ごとに自動で撮る
 撮り終わったら: .venv/bin/python scripts/calibrate_webcam_intrinsics.py
 """
 import argparse
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -33,9 +37,11 @@ HINTS = [
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--device", default="/dev/video2", help="カメラのファイル名")
-parser.add_argument("--shots", type=int, default=20, help="保存する画像の枚数")
-parser.add_argument("--interval", type=float, default=8.0, help="撮影の間隔 [秒]。この間に、盤を次の位置へ動かして、止める")
-parser.add_argument("--max-attempts", type=int, default=None, help="撮影を試す回数の上限(角が見つからなくても数える)。省略すると、枚数の 3 倍。盤が写っていないときに、いつまでも続かないようにする")
+parser.add_argument("--test", action="store_true", help="試しの撮影(Enter で撮る。較正用には数えず、毎回 outputs/chessboard_test.png に上書き保存)")
+parser.add_argument("--enter", action="store_true", help="Enter キーを押すたびに撮る(省略すると、一定の間隔で、自動で撮る)")
+parser.add_argument("--shots", type=int, default=20, help="保存する画像の枚数(本番のとき)")
+parser.add_argument("--interval", type=float, default=8.0, help="自動で撮るときの間隔 [秒]。この間に、盤を次の位置へ動かして、止める")
+parser.add_argument("--max-attempts", type=int, default=None, help="自動で撮るときの、撮影を試す回数の上限(角が見つからなくても数える)。省略すると、枚数の 3 倍")
 parser.add_argument("--size", type=int, nargs=2, default=[1920, 1080], metavar=("W", "H"))
 parser.add_argument("--exposure", type=int, default=300, help="--manual のときの露出時間(0.1 ミリ秒単位、1〜5000)。大きいほど明るい")
 parser.add_argument("--gain", type=int, default=32, help="--manual のときのゲイン(0〜63、このカメラの既定は 32)。大きいほど明るいが、ざらつく")
@@ -55,33 +61,99 @@ cap.set(cv2.CAP_PROP_FPS, 30)
 if not cap.isOpened():
     sys.exit(f"{args.device} を開けなかった(カメラがつながっているか、他のアプリが使っていないか)")
 
-saved, attempt = 0, 0
-max_attempts = args.max_attempts or args.shots * 3
-print(f"{args.shots} 枚撮る(角が見つかったものだけ数える)。盤を、下の指示の位置へ動かして、{args.interval:.0f} 秒ごとの撮影まで、止めておく。")
+
+class LatestFrame:
+    """カメラのコマを、裏(別のスレッド)で読み続けて、一番新しいコマだけを持つ。
+    Enter を待つ間(input() で止まっている間)も、カメラは動き続けて、古いコマがたまる。裏で読み捨てておけば、Enter の瞬間の、新しいコマが取れる。
+    threading.Thread: プログラムの中で、同時に動く、もう 1 つの流れ(スレッド)を作る。[頻度] 待ち時間のある処理で、たまに使う"""
+
+    def __init__(self, capture):
+        self.capture, self.frame, self.count, self.lock, self.running = capture, None, 0, threading.Lock(), True
+        self.thread = threading.Thread(target=self._loop, daemon=True)  # daemon=True: メインの処理が終わったら、一緒に終わる
+        self.thread.start()
+
+    def _loop(self):
+        while self.running:
+            ok, frame = self.capture.read()
+            if ok:
+                with self.lock:  # 読み書きが重ならないよう、鍵をかける。[頻度] スレッドで、同じ変数を使うときの定番
+                    self.frame, self.count = frame, self.count + 1
+
+    def latest(self):
+        """今の最新のコマ(コピー)を返す。起動直後で、まだ無ければ、来るまで待つ。"""
+        while True:
+            with self.lock:
+                if self.frame is not None:
+                    return self.frame.copy()
+            time.sleep(0.02)
+
+    def stop(self):
+        self.running = False
+        self.thread.join(timeout=2)
+
+
+def evaluate(frame):
+    """1 枚のコマを調べて、(角, 表示する文) を返す。角は、見つかれば (54 × 1 × 2)、無ければ None。"""
+    gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+    brightness = gray.mean()
+    sharp = cv2.Laplacian(gray, cv2.CV_64F).var()  # 画像の変化の大きさの分散。大きいほど、くっきり(ぼけていると小さい)
+    corners = find_corners(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))  # OpenCV は、画像を、青・緑・赤の順で持つ。find_corners は RGB を受け取るので、並べ替える
+    text = f"明るさ 平均 {brightness:.0f}(100〜150 が目安)、くっきり度 {sharp:.0f}(小さいと、ぼけ・ぶれ)"
+    if corners is None:
+        return None, text + "\n  × 角が見つからなかった(盤が全部写っているか、ぶれていないか、反射していないか、傾けすぎていないか)"
+    x, y = corners[:, 0, 0], corners[:, 0, 1]
+    size = (x.max() - x.min()) / frame.shape[1]  # 盤の横の幅が、画像の幅の何割か
+    return corners, text + f"\n  ○ 角 54 個が見つかった。盤の範囲: 横 {x.min():.0f}〜{x.max():.0f}、縦 {y.min():.0f}〜{y.max():.0f} 画素(盤の幅は、画像の幅の {size:.0%})"
+
+
+reader = LatestFrame(cap)
+time.sleep(1.5)  # 起動直後は、露出が落ち着いていない。少し待つ
 try:
-    while saved < args.shots and attempt < max_attempts:
-        hint = HINTS[attempt % len(HINTS)]
-        print(f"\n[{saved + 1}/{args.shots}] 次: {hint}")
-        end = time.time() + args.interval
-        while time.time() < end:  # 待つ間も、カメラのコマを読み捨てる(読まないと、古いコマがたまる)
-            cap.read()
-        for _ in range(3):
-            cap.read()  # 撮影の直前に、最新のコマに入れ替える
-        ok, frame = cap.read()
-        attempt += 1
-        if not ok:
-            print("  コマを読めなかった。もう一度")
-            continue
-        corners = find_corners(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))  # OpenCV は、画像を、青・緑・赤の順で持つ。find_corners は RGB を受け取るので、並べ替える
-        if corners is None:
-            print("  × 角が見つからなかった(盤が全部写っているか、ぶれていないか、反射していないか)。やり直し")
-            continue
-        saved += 1
-        cv2.imwrite(str(out_dir / f"shot_{saved:02d}.png"), frame)
-        x, y = corners[:, 0, 0], corners[:, 0, 1]
-        print(f"  ○ 保存 shot_{saved:02d}.png(盤の範囲: 横 {x.min():.0f}〜{x.max():.0f}、縦 {y.min():.0f}〜{y.max():.0f} 画素)")
+    if args.test:
+        print("試しの撮影。盤を持って、Enter で撮る(q + Enter で終わる)。結果は outputs/chessboard_test.png に保存される。")
+        while True:
+            if input("\nEnter で撮影 > ").strip().lower() == "q":
+                break
+            frame = reader.latest()
+            _, text = evaluate(frame)
+            cv2.imwrite(str(ROOT / "outputs" / "chessboard_test.png"), frame)
+            print("  " + text)
+    elif args.enter:
+        saved = 0
+        print(f"本番(Enter で撮る)。角が見つかったものだけ数える。{args.shots} 枚で終わる(q + Enter で途中終了)。")
+        while saved < args.shots:
+            print(f"\n[{saved + 1}/{args.shots}] 次: {HINTS[saved % len(HINTS)]}")
+            if input("盤を動かして止めたら、Enter > ").strip().lower() == "q":
+                break
+            frame = reader.latest()
+            corners, text = evaluate(frame)
+            print("  " + text)
+            if corners is not None:
+                saved += 1
+                cv2.imwrite(str(out_dir / f"shot_{saved:02d}.png"), frame)
+                print(f"  → 保存 shot_{saved:02d}.png")
+    else:
+        saved, attempt = 0, 0
+        max_attempts = args.max_attempts or args.shots * 3
+        print(f"{args.shots} 枚を、{args.interval:.0f} 秒ごとに自動で撮る(角が見つかったものだけ数える)。盤を、指示の位置へ動かして、撮影まで止めておく。")
+        while saved < args.shots and attempt < max_attempts:
+            print(f"\n[{saved + 1}/{args.shots}] 次: {HINTS[attempt % len(HINTS)]}")
+            time.sleep(args.interval)
+            attempt += 1
+            frame = reader.latest()
+            corners, text = evaluate(frame)
+            print("  " + text)
+            if corners is not None:
+                saved += 1
+                cv2.imwrite(str(out_dir / f"shot_{saved:02d}.png"), frame)
+                print(f"  → 保存 shot_{saved:02d}.png")
+        if saved < args.shots:
+            print(f"\n撮影の上限({max_attempts} 回)に達した。角が見つかったのは {saved} 枚だけ")
+except (EOFError, KeyboardInterrupt):  # 入力が閉じた、または Ctrl+C
+    print("\n中断した")
 finally:
+    reader.stop()
     cap.release()
-if saved < args.shots:
-    print(f"\n撮影の上限({max_attempts} 回)に達した。角が見つかったのは {saved} 枚だけ")
-print(f"\n{saved} 枚を {out_dir.relative_to(ROOT)} に保存した。次: .venv/bin/python scripts/calibrate_webcam_intrinsics.py")
+if not args.test:
+    n = len(list(out_dir.glob("shot_*.png")))
+    print(f"\n{out_dir.relative_to(ROOT)} に {n} 枚ある。次: .venv/bin/python scripts/calibrate_webcam_intrinsics.py")
