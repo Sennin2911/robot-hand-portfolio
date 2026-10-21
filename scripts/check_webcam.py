@@ -21,6 +21,8 @@ from hand_sim.webcam import grab_frame, list_cameras, set_manual_exposure  # noq
 parser = argparse.ArgumentParser()
 parser.add_argument("--device", default=None, help="カメラのファイル名。省略すると、MiraBox(キャプチャカード)以外で、最初に見つかったカメラ")
 parser.add_argument("--size", type=int, nargs=2, default=[1920, 1080], metavar=("W", "H"), help="画像の大きさ(幅 高さ)")
+parser.add_argument("--exposure", type=int, default=300, help="--manual のときの露出時間(0.1 ミリ秒単位、1〜5000)。大きいほど明るい")
+parser.add_argument("--gain", type=int, default=32, help="--manual のときのゲイン(0〜63、このカメラの既定は 32)。大きいほど明るいが、ざらつく")
 parser.add_argument("--manual", action="store_true", help="撮る前に、露出とホワイトバランスを固定にする")
 args = parser.parse_args()
 
@@ -39,7 +41,7 @@ if device is None:
 print(f"使うカメラ: {device}")
 
 if args.manual:
-    set_manual_exposure(device)
+    set_manual_exposure(device, args.exposure, gain=args.gain)
     print("露出とホワイトバランスを固定にした")
 
 t0 = time.perf_counter()

@@ -37,11 +37,13 @@ parser.add_argument("--shots", type=int, default=20, help="保存する画像の
 parser.add_argument("--interval", type=float, default=8.0, help="撮影の間隔 [秒]。この間に、盤を次の位置へ動かして、止める")
 parser.add_argument("--max-attempts", type=int, default=None, help="撮影を試す回数の上限(角が見つからなくても数える)。省略すると、枚数の 3 倍。盤が写っていないときに、いつまでも続かないようにする")
 parser.add_argument("--size", type=int, nargs=2, default=[1920, 1080], metavar=("W", "H"))
+parser.add_argument("--exposure", type=int, default=300, help="--manual のときの露出時間(0.1 ミリ秒単位、1〜5000)。大きいほど明るい")
+parser.add_argument("--gain", type=int, default=32, help="--manual のときのゲイン(0〜63、このカメラの既定は 32)。大きいほど明るいが、ざらつく")
 parser.add_argument("--manual", action="store_true", help="露出とホワイトバランスを固定にする(盤の白と黒が、つぶれない明るさに、先に決めておく)")
 args = parser.parse_args()
 
 if args.manual:
-    set_manual_exposure(args.device)
+    set_manual_exposure(args.device, args.exposure, gain=args.gain)
 out_dir = ROOT / "outputs" / "chessboard_shots"
 out_dir.mkdir(parents=True, exist_ok=True)
 
