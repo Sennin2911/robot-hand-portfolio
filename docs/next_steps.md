@@ -37,7 +37,10 @@
        **焦点・ズームの項目は無い**(固定焦点と見られる)。視野角・歪みは仕様に無い(広角気味で、画面の端の歪みが見える)。
        確認: `.venv/bin/python scripts/check_webcam.py`(画像を `outputs/webcam_test.png` に保存。`--manual` で露出・色を固定)。部品は `src/hand_sim/webcam.py`(OpenCV なしで、ffmpeg で取り込む)。
        固定の設定例: `v4l2-ctl -d /dev/video2 -c auto_exposure=1,exposure_time_absolute=300,white_balance_automatic=0,white_balance_temperature=4500`(自動に戻すには `auto_exposure=3,white_balance_automatic=1`)。露出は、机の上の明るさに合わせて決める(300 だと、室内では暗かった)。
-       次: カメラの固定位置(真上〜前の斜め上、高さ 40〜90 cm)、チェスボードでの視野角・歪みの較正、固定の目印の板、OpenCV を入れるか。
+       **OpenCV を入れた**(`opencv-python-headless` 5.0.0、`requirements.txt` に追記)。
+       **チェスボードの較正(2026-10-22 準備完了。実機での撮影は、作者の番)**: 盤は A4 横、1 マス 25.0 mm、10 × 7 マス(内側の角 9 × 6 個)。`scripts/make_chessboard.py` で作る。
+       手順と注意は `docs/webcam_calibration.md`。撮影 `scripts/capture_chessboard.py`、較正 `scripts/calibrate_webcam_intrinsics.py`(結果は `calibration/webcam_intrinsics.json`)、合成データでの確認 `scripts/check_intrinsics.py`。
+       次: 盤を印刷して、平らな板に貼り、20 枚撮る → 較正 → カメラの固定位置(真上〜前の斜め上、高さ 40〜90 cm)→ 固定の目印の板。
      (以前の記述)工程4 には、**USB ウェブカメラの用意が要る**(UVC 対応、1080p 以上、固定焦点または手動で焦点を固定できるもの。広角すぎるレンズ(歪みが大きい)は避ける)。
      確認のコマンド: `v4l2-ctl --list-devices`、`v4l2-ctl -d /dev/video0 --list-formats-ext`、`lsusb`。
 5. 実機で試験と分析(30〜50回、sim と失敗の内訳を比べる)
