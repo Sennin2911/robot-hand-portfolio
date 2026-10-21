@@ -1,0 +1,55 @@
+<!-- 【概要】部品仕分け用のシーン(新計画の工程3)。SO-101 本体(so101_new_calib.xml、原本のまま)に、
+     床・照明・3 色の立方体(赤・緑・青)・3 色の置き場・真上から見下ろす固定カメラ「overhead」を足したもの。
+     立方体の位置と向きは、試験のたびにプログラム(sorting.py)がランダムに置き直す(下の pos は、置き直す前の仮の位置)。
+     単位は m(長さ)、rad(角度)。原点はアームの付け根。 -->
+<mujoco model="so101_sort">
+  <include file="so101_new_calib.xml"/>
+
+  <visual>
+    <headlight diffuse="0.35 0.35 0.35" ambient="0.2 0.2 0.2" specular="0 0 0"/>
+    <global offwidth="1280" offheight="720"/>
+  </visual>
+
+  <asset>
+    <texture name="grid" type="2d" builtin="checker" width="256" height="256" rgb1=".85 .85 .85" rgb2=".75 .75 .75"/>
+    <material name="grid" texture="grid" texrepeat="6 6" reflectance="0.1"/>
+    <!-- 立方体は、はっきりした色(カメラの色検出が、色の違いで見分ける)。 -->
+    <material name="red" rgba="0.9 0.1 0.1 1"/>
+    <material name="green" rgba="0.1 0.8 0.1 1"/>
+    <material name="blue" rgba="0.1 0.1 0.9 1"/>
+    <!-- 置き場は、薄い(うすい)色。色検出の条件(はっきりした色だけ)に引っかからないようにして、立方体と取り違えないようにする。 -->
+    <material name="pad_red" rgba="0.95 0.55 0.55 1"/>
+    <material name="pad_green" rgba="0.55 0.9 0.55 1"/>
+    <material name="pad_blue" rgba="0.55 0.55 0.95 1"/>
+  </asset>
+
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true" diffuse="0.45 0.45 0.45" specular="0 0 0"/>
+    <geom name="floor" type="plane" size="0.6 0.6 0.05" material="grid"/>
+
+    <!-- 置き場: 一辺 6 cm の薄い板(厚み 2 mm)。contype/conaffinity="0" は「何とも衝突しない」(見た目だけの目印)。
+         立方体は、この上(机の面)に置かれる。座標は sorting.py の ZONES と同じにする。 -->
+    <geom name="pad_red" type="box" size="0.03 0.03 0.001" pos="0.07 0.17 0.001" material="pad_red" contype="0" conaffinity="0"/>
+    <geom name="pad_green" type="box" size="0.03 0.03 0.001" pos="0.14 0.17 0.001" material="pad_green" contype="0" conaffinity="0"/>
+    <geom name="pad_blue" type="box" size="0.03 0.03 0.001" pos="0.21 0.17 0.001" material="pad_blue" contype="0" conaffinity="0"/>
+
+    <!-- 立方体: 一辺 3 cm(size は「一辺の半分」)、20 g。freejoint は、6 自由度で自由に動ける物体にする印。
+         名前の約束: body は cube_<色>、freejoint は cube_<色>_free、geom は cube_<色>_geom。 -->
+    <body name="cube_red" pos="0.15 -0.10 0.015">
+      <freejoint name="cube_red_free"/>
+      <geom name="cube_red_geom" type="box" size="0.015 0.015 0.015" mass="0.02" material="red"/>
+    </body>
+    <body name="cube_green" pos="0.20 -0.02 0.015">
+      <freejoint name="cube_green_free"/>
+      <geom name="cube_green_geom" type="box" size="0.015 0.015 0.015" mass="0.02" material="green"/>
+    </body>
+    <body name="cube_blue" pos="0.25 0.04 0.015">
+      <freejoint name="cube_blue_free"/>
+      <geom name="cube_blue_geom" type="box" size="0.015 0.015 0.015" mass="0.02" material="blue"/>
+    </body>
+
+    <!-- 固定カメラ: 床の上 0.6 m から真下を見る(scene_vs.xml と同じ)。
+         xyaxes: 画像の右 = 世界の +x、画像の上 = 世界の +y。fovy: 縦方向の視野角 [度]。 -->
+    <camera name="overhead" pos="0.2 0 0.6" xyaxes="1 0 0 0 1 0" fovy="45"/>
+  </worldbody>
+</mujoco>

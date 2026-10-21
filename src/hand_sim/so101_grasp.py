@@ -15,9 +15,15 @@ GRIP_CLOSE = -0.1    # 閉じる指令。立方体に当たって途中で止ま
 # --- 掴む姿勢 ---
 # 掴む位置: 立方体の中心が、gripperframe(固定側の指の先端)から見てどこにあるか(gripperframe の座標系 [m])。
 #   x = −0.005: 指の先より 5 mm 手前(指の根もと側)。小さくしすぎると、指の先が机にぶつかる。
-#   z = +0.017: 固定側の指の内側の面(z = −0.004)から、立方体の中心(半辺 0.015)までの余裕を持たせた位置。
-#               閉じるとき、動く側の指が立方体を固定側へ押して、中心は約 z = +0.011 に落ち着く。
-CUBE_IN_SITE = np.array([-0.005, 0.0, 0.017])
+#   z = +0.029: 指が開閉する向きの位置。2 本の指の間の、どこに立方体を入れるか。
+#     固定側の指の内側の面は z ≈ −0.002、開いた(0.5 rad)動く側の指の面は z ≈ +0.045。中央(z ≈ +0.022)ではなく少し動く側に寄せたのは、
+#     試して決めた値: 立方体の位置が ±14 mm ずれても、4 方向すべてで掴めた(0.017 だと、固定側へ 3 mm ずれただけで、
+#     固定側の指が立方体の上に乗って失敗した)。閉じるとき、動く側の指が立方体を固定側へ押して、中心は約 +0.011 に落ち着く。
+CUBE_IN_SITE = np.array([-0.005, 0.0, 0.029])
+# 閉じたあとの、立方体の中心の位置(gripperframe の座標系 [m])。閉じると、動く側の指が立方体を固定側の指へ押しつけるので、
+# z 方向は「固定側の指の面 + 半辺」に落ち着く(= 掴む前の位置のずれによらない。実測: 0.0148)。x は指の先からの深さのまま。
+# 置くときは、立方体の中心(この位置)が置き場の中心に来るように、手の位置を決める(掴む前の位置のままだと 12 mm ずれた)。
+CUBE_IN_HAND = np.array([-0.0054, 0.0, 0.0148])
 HOVER = 0.05  # 掴む姿勢から、真上へ上がる高さ [m]。立方体(高さ 3 cm)の上を通れる余裕。これ以上高くすると、手首(wrist_flex)が可動域の端(95°)に届く
 CUBE_HALF = 0.015  # 立方体の一辺の半分 [m](scene_vs.xml の size と同じ)
 
@@ -37,7 +43,7 @@ GRIP_TORQUE_MAX = 0.3
 CONTACT_TIMECONST = 0.004
 
 
-def load_grasp_model(xml_path):
+def load_grasp_model(xml_path, cube_geoms=("cube_geom",)):
     """シーンを読み込み、gripper の指の当たり判定を「指の先の細い板」だけに作り直した model を返す。
 
     なぜ要るか: MuJoCo は、メッシュどうしの接触を「凸包」(でこぼこを埋めて、出っ張りだけを結んだ形)で判定する。
@@ -45,6 +51,7 @@ def load_grasp_model(xml_path):
     (実測: 立方体を掴む位置で、凸包が立方体に 7.6 mm めり込んだ)。見た目のメッシュは、そのままにしておく。
     やること: 元の指のメッシュの当たり判定を切り、指の先の板だけの頂点から、新しい当たり判定の形(これも凸包)を作って足す。
     板は、ほぼ凸な形なので、凸包にしても形が変わらない。
+    cube_geoms: 掴む対象の立方体の geom の名前(接触を硬くする対象)。立方体が複数あるシーンでは、全部の名前を渡す。
     mujoco.MjSpec: XML を「編集できる設計図」として読み込む仕組み。[頻度] あまり使わない(読み込んだあとにモデルを編集したいときだけ)。
     """
     base = mujoco.MjModel.from_xml_path(str(xml_path))  # 頂点の位置を調べるための、編集前の model
@@ -78,9 +85,20 @@ def load_grasp_model(xml_path):
         spec.body(base.body(body_id).name).add_geom(
             name=name, type=mujoco.mjtGeom.mjGEOM_MESH, meshname=name, group=3, friction=BLADE_FRICTION,
             solref=[CONTACT_TIMECONST, 1])
-    spec.geom("cube_geom").solref = [CONTACT_TIMECONST, 1]  # 立方体側も硬くする(接触は、2つの geom の値を混ぜて決まる)
+    for name in cube_geoms:
+        spec.geom(name).solref = [CONTACT_TIMECONST, 1]  # 立方体側も硬くする(接触は、2つの geom の値を混ぜて決まる)
     spec.actuator("gripper").forcerange = [-GRIP_TORQUE_MAX, GRIP_TORQUE_MAX]  # 挟む力の上限
     return spec.compile()
+
+
+# 待機の姿勢(関節角 5 つ [rad])。腕をたたみ、shoulder_pan を −90°(左へ)回して、立方体を置く範囲(x ≥ 0.14 m)から外す。
+# カメラで立方体を探すとき、腕が立方体を隠さないための姿勢。(pan = 0 のたたんだ姿勢だと、手が x = 0.2 m に来て、視野の真ん中を隠した)
+HOME_Q = np.array([-1.57, -1.7, 1.6, 1.0, 0.0])
+
+
+def go_home(model, data, seconds=2.0, on_step=None):
+    """腕を待機の姿勢(HOME_Q)に戻す。指は開く。"""
+    move_to(model, data, HOME_Q, GRIP_OPEN, seconds, on_step)
 
 
 def grasp_rotation(yaw):
@@ -96,11 +114,12 @@ def grasp_rotation(yaw):
     return np.stack([x, y, z], axis=1)  # np.stack(..., axis=1): ベクトルを列として並べて 3×3 にする。[頻度] たまに使う
 
 
-def grasp_site_pose(cube_pos, yaw):
+def grasp_site_pose(cube_pos, yaw, in_site=CUBE_IN_SITE):
     """立方体の中心 cube_pos [m] を掴むときの、gripperframe の位置と向き (pos, R) を返す。
-    gripperframe から見た立方体の位置は CUBE_IN_SITE なので、逆に、立方体の位置から gripperframe の位置を引き算で出す。"""
+    gripperframe から見た立方体の位置は in_site(掴む前は CUBE_IN_SITE、掴んだあとは CUBE_IN_HAND)なので、
+    逆に、立方体の位置から gripperframe の位置を引き算で出す。"""
     R = grasp_rotation(yaw)
-    pos = np.asarray(cube_pos) - R @ CUBE_IN_SITE  # R @ v: gripperframe の座標系のベクトル v を、世界座標に直す
+    pos = np.asarray(cube_pos) - R @ in_site  # R @ v: gripperframe の座標系のベクトル v を、世界座標に直す
     return pos, R
 
 
@@ -117,9 +136,9 @@ def plan_pick_place(model, cube_pos, place_xy, yaw=0.0, q_init=(0, -1.7, 1.6, 1.
     q = np.array(q_init, dtype=float)
     poses = {}
 
-    def solve(name, target):
+    def solve(name, target, in_site):
         nonlocal q  # nonlocal: 外側の関数の変数 q を、この中から書き換える宣言。[頻度] あまり使わない(ここでは「前の解」を引き継ぐため)
-        pos, R = grasp_site_pose(target, yaw)
+        pos, R = grasp_site_pose(target, yaw, in_site)
         q, ok = solve_ik_pose(model, scratch, pos, R, q)
         if not ok:
             raise ValueError(f"IK が解けない姿勢: {name}(立方体の中心 {np.round(target, 3)} m)")
@@ -127,10 +146,11 @@ def plan_pick_place(model, cube_pos, place_xy, yaw=0.0, q_init=(0, -1.7, 1.6, 1.
 
     # 先に「低い姿勢(掴む・置く)」を解き、その解を出発点にして「真上の姿勢」を解く。
     # 真上の姿勢は、折りたたんだ姿勢から遠く、そこから直接だと解けないことがある。低い姿勢のほうが、手が向きを作りやすい。
-    solve("grasp", cube_pos)
-    solve("above", cube_pos + [0, 0, HOVER])
-    solve("place", place_pos)
-    solve("place_above", place_pos + [0, 0, HOVER])
+    # 掴む前(grasp、above)は立方体が CUBE_IN_SITE にあり、掴んだあと(place、place_above)は CUBE_IN_HAND にある。
+    solve("grasp", cube_pos, CUBE_IN_SITE)
+    solve("above", cube_pos + [0, 0, HOVER], CUBE_IN_SITE)
+    solve("place", place_pos, CUBE_IN_HAND)
+    solve("place_above", place_pos + [0, 0, HOVER], CUBE_IN_HAND)
     return poses
 
 
@@ -171,23 +191,24 @@ def move_to(model, data, q_arm, grip, seconds, on_step=None):
             on_step()
 
 
-def set_cube_pose(model, data, pos, yaw=0.0):
-    """立方体を pos [m] に、机と平行に yaw [rad] だけ回して置く(freejoint の qpos を直接書き換える)。
+def set_cube_pose(model, data, pos, yaw=0.0, cube="cube"):
+    """立方体(body の名前 cube)を pos [m] に、机と平行に yaw [rad] だけ回して置く(freejoint の qpos を直接書き換える)。
+    freejoint の名前は「<cube>_free」(例: cube → cube_free、cube_red → cube_red_free)という約束。
     freejoint の qpos は 7 つ: 位置 (x, y, z) と、向きのクォータニオン (w, x, y, z)。
     クォータニオン: 3次元の回転を 4 つの数で表す方法。z 軸まわりに yaw 回すなら (cos(yaw/2), 0, 0, sin(yaw/2))。[頻度] ロボットでは定番"""
-    adr = model.jnt_qposadr[model.joint("cube_free").id]  # この関節の値が、qpos の何番目から始まるか
+    adr = model.jnt_qposadr[model.joint(f"{cube}_free").id]  # この関節の値が、qpos の何番目から始まるか
     data.qpos[adr:adr + 7] = [*pos, np.cos(yaw / 2), 0.0, 0.0, np.sin(yaw / 2)]
     mujoco.mj_forward(model, data)
 
 
-def pick_and_place(model, data, cube_pos, place_xy, cube_yaw=0.0, on_step=None):
+def pick_and_place(model, data, cube_pos, place_xy, cube_yaw=0.0, on_step=None, cube="cube"):
     """立方体(机の上で cube_yaw [rad] だけ回っている)を掴んで、置き場へ運ぶ。
     data は、腕が初期姿勢(全関節 0)で、立方体が cube_pos にある状態(set_cube_pose で作る)。
 
     戻り値: 動作の各段階の記録の辞書(段階ごとの立方体の位置)。成功の判定は、呼び出し側(check スクリプト)で行う。
     """
     poses, _ = plan_for_cube(model, cube_pos, place_xy, cube_yaw)
-    cube_id = model.body("cube").id
+    cube_id = model.body(cube).id
     log = {}
 
     def cube_xyz():

@@ -122,3 +122,54 @@ def bbox_to_center(bbox):
         return None
     x0, y0, x1, y1 = bbox
     return ((x0 + x1) / 2, (y0 + y1) / 2)
+
+
+# ---- 複数の色の立方体を見分けて、位置と向きを出す(部品仕分け用。新計画の工程3)----
+
+def color_mask(img, color):
+    """画像 img の中で、color ("red"、"green"、"blue")の画素が True の配列(マスク)を返す。
+    条件は「その色のチャンネルが大きく(100 超)、他の 2 つがその 0.4 倍未満」。置き場の薄い色(他のチャンネルも大きい)や、
+    アームの黄色・黒は、この条件で除外される。"""
+    channel = {"red": 0, "green": 1, "blue": 2}[color]
+    main = img[:, :, channel].astype(float)  # astype(float): 整数(uint8)のまま 0.4 倍などを比べると、丸め誤差が出るので小数にする
+    others = [img[:, :, c].astype(float) for c in range(3) if c != channel]
+    return (main > 100) & (others[0] < 0.4 * main) & (others[1] < 0.4 * main)
+
+
+def _largest_component(mask):
+    """マスクの中で、一番大きな「つながった塊」だけを残したマスクを返す。無ければ None。(_largest_blob_centroid と同じ考え方)"""
+    labels, n = ndimage.label(mask)
+    if n == 0:
+        return None
+    sizes = ndimage.sum(mask, labels, index=range(1, n + 1))
+    return labels == (int(np.argmax(sizes)) + 1)
+
+
+def estimate_square_yaw(mask):
+    """マスク(正方形に近い塊)の向き [度、0〜90 未満] を返す。世界座標の x 軸(画像の右)から、反時計回りに測る。
+
+    考え方: 塊の画素を、角度 θ だけ回した座標軸に投影し、軸にそろった長方形の面積が最小になる θ を探す。
+    正方形は、辺が軸にそろったとき、外接する長方形の面積が最小になる。0〜90° を 1° ずつ試す(90° ごとに同じ形なので、これで足りる)。
+    (画像の v は下へ増えるが、世界の y は上へ増える。向きを世界座標で出すため、v の符号を反転して扱う。)
+    """
+    v_idx, u_idx = np.nonzero(mask)
+    pts = np.stack([u_idx, -v_idx], axis=1).astype(float)  # (画素数, 2): 世界座標と同じ向き(右 = +x、上 = +y)の座標
+    best_theta, best_area = 0, np.inf
+    for theta in range(90):
+        t = np.radians(theta)
+        a = pts @ np.array([np.cos(t), np.sin(t)])  # θ 方向の軸への投影(各画素の位置)
+        b = pts @ np.array([-np.sin(t), np.cos(t)])  # それに垂直な軸への投影
+        area = (a.max() - a.min()) * (b.max() - b.min())
+        if area < best_area:
+            best_theta, best_area = theta, area
+    return float(best_theta)
+
+
+def find_cube_pose(img, color):
+    """画像 img から、color の立方体(一番大きい塊)の、中心 (u, v) [画素] と向き yaw [度] を返す。無ければ None。
+    戻り値: (u, v, yaw)。中心は、塊の外接する四角形の中心(find_*_centroid と同じ)。"""
+    mask = _largest_component(color_mask(img, color))
+    if mask is None or mask.sum() < 20:  # 20 画素未満は、ノイズとして見つけなかったことにする
+        return None
+    v_idx, u_idx = np.nonzero(mask)
+    return ((u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2, estimate_square_yaw(mask))
