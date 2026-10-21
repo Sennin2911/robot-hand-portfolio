@@ -43,11 +43,17 @@ parser.add_argument("--enter", action="store_true", help="Enter キーを押す�
 parser.add_argument("--shots", type=int, default=20, help="保存する画像の枚数(本番のとき)")
 parser.add_argument("--interval", type=float, default=8.0, help="自動で撮るときの間隔 [秒]。この間に、盤を次の位置へ動かして、止める")
 parser.add_argument("--max-attempts", type=int, default=None, help="自動で撮るときの、撮影を試す回数の上限(角が見つからなくても数える)。省略すると、枚数の 3 倍")
+parser.add_argument("--plan", default=None, help="撮影の指示を 1 行ずつ書いたテキストファイル(# で始まる行は無視)。省略すると、紙の盤を手で動かす場合の、内蔵の指示。画面に映す場合は、outputs/chessboard_app/shooting_plan.txt を渡す")
 parser.add_argument("--size", type=int, nargs=2, default=[1920, 1080], metavar=("W", "H"))
 parser.add_argument("--exposure", type=int, default=300, help="--manual のときの露出時間(0.1 ミリ秒単位、1〜5000)。大きいほど明るい")
 parser.add_argument("--gain", type=int, default=32, help="--manual のときのゲイン(0〜63、このカメラの既定は 32)。大きいほど明るいが、ざらつく")
 parser.add_argument("--manual", action="store_true", help="露出とホワイトバランスを固定にする(盤の白と黒が、つぶれない明るさに、先に決めておく)")
 args = parser.parse_args()
+if args.plan:
+    with open(args.plan, encoding="utf-8") as f:
+        HINTS = [line.strip() for line in f if line.strip() and not line.lstrip().startswith("#")]  # 空行と # の行を除いて、1 行 = 1 つの指示
+    if not HINTS:
+        sys.exit(f"{args.plan} に、指示が 1 行もない")
 
 if args.manual:
     set_manual_exposure(args.device, args.exposure, gain=args.gain)

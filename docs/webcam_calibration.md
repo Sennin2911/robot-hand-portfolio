@@ -76,6 +76,7 @@ Enter を押すたびに 1 枚撮り、「角が見つかったか」「明る�
 .venv/bin/python scripts/capture_chessboard.py --manual --exposure 300            # 8 秒ごとに、自動で撮る(両手で盤を持つとき)
 ```
 `--enter` は、**前の実行で撮った画像の、続きの番号**(shot_07.png の次は shot_08.png)から保存する。何回かに分けて撮っても、上書きされない。やり直したいときは、`outputs/chessboard_shots/` の画像を、自分で消す。
+画面に映した盤を撮る場合は、`--plan outputs/chessboard_app/shooting_plan.txt` を付けると、ターミナルの指示が、その計画(近い距離 12 枚、中くらい 6 枚、遠い 4 枚。傾きと盤の配置)の順に出る(内蔵の指示は、紙の盤を手で動かす場合のもの)。
 (露出を固定した後、自動に戻すには: `v4l2-ctl -d /dev/video2 -c auto_exposure=3,white_balance_automatic=1`)
 ```
 .venv/bin/python scripts/capture_chessboard.py --manual --exposure 300        # 20 枚、8 秒おき。露出と色を固定する
