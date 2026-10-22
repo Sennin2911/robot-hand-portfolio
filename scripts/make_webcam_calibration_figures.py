@@ -23,6 +23,7 @@ import numpy as np  # noqa: E402
 from matplotlib.patches import FancyBboxPatch, Rectangle  # noqa: E402
 
 from hand_sim.intrinsics import find_corners, object_points  # noqa: E402
+from hand_sim.real_camera import distort_pixels  # noqa: E402  歪みの式の関数は、実機のカメラの部品(real_camera.py)に置いてある
 
 plt.rcParams["font.family"] = "Noto Sans CJK JP"  # 日本語の文字化け(□□□)を避けるフォント指定
 plt.rcParams["axes.unicode_minus"] = False
@@ -42,18 +43,6 @@ def calibrate(corner_list):
         p, _ = cv2.projectPoints(o, r, t, K, dist)
         errs.append(float(np.sqrt(np.mean(np.sum((p - c) ** 2, axis=2)))))
     return K, dist, rvecs, tvecs, errs
-
-
-def distort_pixels(u, v, K, dist):
-    """歪みのない理想の画素 (u, v) が、レンズを通ると、どの画素に写るかを返す(OpenCV の歪みのモデルそのまま)。
-    手順: 画素 → 正規化座標(中心を 0、焦点距離で割る)→ 歪みの式 → 画素に戻す。"""
-    k1, k2, p1, p2, k3 = dist
-    x, y = (u - K[0, 2]) / K[0, 0], (v - K[1, 2]) / K[1, 1]
-    r2 = x * x + y * y
-    radial = 1 + k1 * r2 + k2 * r2**2 + k3 * r2**3  # 中心から離れるほど、画素が内側へ縮む(k1 が負 = 樽型)
-    xd = x * radial + 2 * p1 * x * y + p2 * (r2 + 2 * x * x)
-    yd = y * radial + p1 * (r2 + 2 * y * y) + 2 * p2 * x * y
-    return xd * K[0, 0] + K[0, 2], yd * K[1, 1] + K[1, 2]
 
 
 # ---- 画像から角を探して、実機と同じ手順で較正をやり直す(scripts/calibrate_webcam_intrinsics.py と同じ: 誤差が大きい画像を除いて、もう一度) ----
