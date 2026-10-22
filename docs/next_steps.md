@@ -78,7 +78,7 @@
        **OpenCV を入れた**(`opencv-python-headless` 5.0.0、`requirements.txt` に追記)。
        **チェスボードの較正(2026-10-22 準備完了。実機での撮影は、作者の番)**: 盤は A4 横、1 マス 25.0 mm、10 × 7 マス(内側の角 9 × 6 個)。`scripts/make_chessboard.py` で作る。
        手順と注意は `docs/webcam_calibration.md`。撮影 `scripts/capture_chessboard.py`、較正 `scripts/calibrate_webcam_intrinsics.py`(結果は `calibration/webcam_intrinsics.json`)、合成データでの確認 `scripts/check_intrinsics.py`。
-       **→ 較正は完了(2026-10-22。再投影誤差 0.275 画素。結果は上の「今ここ」)。** 次: 画像の補正 → カメラの固定位置(真上〜前の斜め上、高さ 40〜90 cm)→ 固定の目印の板。
+       **→ 較正は完了(2026-10-22。再投影誤差 0.275 画素。結果は上の「今ここ」)。** (画像の補正の部品も完了。下の「済んだ: 画像の補正」)次: カメラの固定位置(真上〜前の斜め上、高さ 40〜90 cm)→ 固定の目印の板。
      (以前の記述)工程4 には、**USB ウェブカメラの用意が要る**(UVC 対応、1080p 以上、固定焦点または手動で焦点を固定できるもの。広角すぎるレンズ(歪みが大きい)は避ける)。
      確認のコマンド: `v4l2-ctl --list-devices`、`v4l2-ctl -d /dev/video0 --list-formats-ext`、`lsusb`。
 5. 実機で試験と分析(30〜50回、sim と失敗の内訳を比べる)
