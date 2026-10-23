@@ -2,6 +2,7 @@
 マーカーの 1 辺は、既定 30.0 mm(黒い枠の外側から外側まで)。PDF は、大きさ(mm)が正確になるように作る(印刷するときは、必ず「実際のサイズ」「100%」で。
 「ページに合わせる」は、大きさが変わるので使わない)。印刷したら、ページの下の 100 mm の線を定規で測って、大きさを確かめる。
 マーカーのまわりの白い余白(1 辺の約 0.2 倍)は、検出に必要なので、切るときも、白を残すこと。
+(紙面の注記は英語。日本語を PDF に入れると、ビューアによって文字化けしたため。)
 
 使い方(この .venv で実行):
     .venv/bin/python scripts/make_aruco_markers.py                 # outputs/aruco_markers_A4.pdf と .png(ID 0〜5、30 mm)
@@ -26,7 +27,8 @@ parser.add_argument("--side", type=float, default=30.0, help="マーカーの 1 
 parser.add_argument("--count", type=int, default=6, help="作るマーカーの個数(ID 0 から順に)")
 args = parser.parse_args()
 
-plt.rcParams["font.family"] = "Noto Sans CJK JP"  # 日本語の文字化け(□□□)を避けるフォント指定
+# 印刷物の文字は、英数字だけにする。日本語を PDF に入れると、ビューアによって文字化けすることがある
+# (matplotlib は日本語のフォントを Type 3 などの形で埋め込むが、これを正しく表示できないビューアがある)。日本語の説明は docs/aruco_markers.md に書く。
 PAGE_W, PAGE_H = 210.0, 297.0  # A4 を縦に使う [mm]
 MM = 25.4  # 1 インチ = 25.4 mm。matplotlib の図の大きさは、インチで指定する
 SIDE = args.side
@@ -48,14 +50,14 @@ for i in range(args.count):
 ax.set_xlim(0, PAGE_W)  # imshow が、軸の範囲を書き換えるので、決め直す
 ax.set_ylim(PAGE_H, 0)
 y_note = 15 + ((args.count - 1) // COLS + 1) * CELL + 8
-ax.text(PAGE_W / 2, y_note, f"ArUco DICT_4X4_50、1 辺 {SIDE:.1f} mm(黒い枠の外側から外側)。A4 縦、100% で印刷(「ページに合わせる」は使わない)。白い余白を残して切る",
+ax.text(PAGE_W / 2, y_note, f"ArUco DICT_4X4_50, side {SIDE:.1f} mm (outer edge of black frame). Print on A4 at 100% (not 'fit to page'). Keep the white margin when cutting.",
         ha="center", va="center", fontsize=7)
 bar_y = y_note + 10
 x_bar = (PAGE_W - 100) / 2
 ax.plot([x_bar, x_bar + 100], [bar_y, bar_y], color="black", lw=1.2)  # 100 mm の線。印刷した後、定規で測って、100 mm になっているか確かめる
 for x in (x_bar, x_bar + 100):
     ax.plot([x, x], [bar_y - 2, bar_y + 2], color="black", lw=1.2)
-ax.text(PAGE_W / 2, bar_y + 6, "↑ この線が 100 mm か、定規で確かめる(違えば、印刷の倍率を直す)", ha="center", va="center", fontsize=7)
+ax.text(PAGE_W / 2, bar_y + 6, "^ This line must be 100 mm. Check with a ruler (if not, fix the print scale).", ha="center", va="center", fontsize=7)
 
 out_dir = ROOT / "outputs"
 out_dir.mkdir(exist_ok=True)
