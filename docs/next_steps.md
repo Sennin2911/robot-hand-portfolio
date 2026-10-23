@@ -35,7 +35,10 @@
 - `src/hand_sim/aruco_marker.py`(`make_marker_image`、`detect_markers`=ID・位置・向き、`marker_pose_in_world`)、印刷用 `scripts/make_aruco_markers.py`(A4、ID 0〜5、30 mm)、
   答え合わせ `scripts/check_aruco.py`(合成画像で全 OK)、実機で見る `scripts/view_real_markers.py`。解説は `docs/aruco_markers.md`。
 - 合成画像での精度: 横 0.3 mm 未満、**奥行き(カメラへ向かう方向)が 0.6〜4.6 mm**、向きは傾けると 1° 未満、**真正面だと 3〜5°**。実機は、これより悪くなりうる。
-- **次は作者の番**: 印刷(100% で、100 mm の線を定規で確認)→ 手の平らな面に貼る(つや消し)→ 黒い枠の 1 辺を定規で測る →
+- **(2026-10-24 追記)作者が持っているシール(直径 20 mm、5 色。`docs/img/robot-arm-marking.jpg`)を、パンチで 5 mm に抜いて使う方式も作った**: `src/hand_sim/dot_marker.py`、`scripts/check_dot_marker.py`(合成画像で全 OK)、
+  `scripts/view_real_dots.py`(色ごとの面積と姿勢を表示)、解説 `docs/dot_markers.md`。**弱点は、貼り位置の測りの精度**(0.5 mm の誤差で、奥行きが約 1 cm、向きが最大 60° ずれる)。ArUco と、どちらで進めるかは、実機で比べて決める。
+  次は作者の番: 4 色(赤・黄・緑・青)を 2×2、中心の間隔 30 mm で、手の平らな面に貼る → ノギスで位置を測る → `view_real_dots.py --manual --exposure 300` で、色ごとの面積(100 画素以上)が出るか見る。
+- (ArUco の場合の作者の番)印刷(100% で、100 mm の線を定規で確認)→ 手の平らな面に貼る(つや消し)→ 黒い枠の 1 辺を定規で測る →
   `.venv/bin/python scripts/view_real_markers.py --manual --exposure 300 --side <測った値 mm>` で、読めるか・距離が合うかを見る。結果を見て、調整する。
 
 ### 次にやること(この順)
