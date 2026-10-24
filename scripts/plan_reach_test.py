@@ -72,6 +72,8 @@ def real_cmd_from_q5(q5):
     """IK の結果(sim の関節角 5 つ)を、実機への指令値 {"名前.pos": 度} にする(OFFSET_DEG を引き、gripper は動かさない値)。"""
     act = sim_to_real(model, np.r_[q5, GRIP_Q])
     act["gripper.pos"] = GRIP_REAL
+    # wrist_roll は、実機の読みで 0 にする。OFFSET_DEG のフィットは、roll がほぼ 0 の姿勢で求めた。また、gripperframe は roll の軸の上にほぼ乗るので、手先の位置にはほとんど効かない(数 mm 未満)。
+    act["wrist_roll.pos"] = 0.0
     return {k: float(v) for k, v in act.items()}
 
 
@@ -82,7 +84,7 @@ def within_limits(cmd):
 def solve(target, theta_right, q_init):
     q5, ok = solve_ik_pose(model, data, target, hand_down_R(theta_right), q_init, max_iter=400, tol_pos=3e-4, tol_rot=3e-3)
     mujoco.mj_forward(model, data)
-    return q5, ok and abs(np.degrees(q5[4])) < 3.0  # wrist_roll がほぼ 0 の解だけ使う(IK が roll を使っていないか)
+    return q5, ok and abs(np.degrees(q5[4])) < 8.0  # wrist_roll が大きく振れた解は使わない(OFFSET の +5.7° を含めて、roll が小さい解)
 
 
 def min_clearance(cmd_a, cmd_b, steps=41):
