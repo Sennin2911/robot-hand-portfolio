@@ -12,7 +12,8 @@
     cd ~/ドキュメント/robot-hand-portfolio
     ~/lerobot-work/lerobot/.venv/bin/python scripts/real_run_plan.py                                  # outputs/reach_plan.json
     ~/lerobot-work/lerobot/.venv/bin/python scripts/real_run_plan.py --plan outputs/reach_plan2.json  # 補正した計画
-    ~/lerobot-work/lerobot/.venv/bin/python scripts/real_run_plan.py --only 1 2                       # 番号 1 と 2 だけ(最初の試しに)
+    ~/lerobot-work/lerobot/.venv/bin/python scripts/real_run_plan.py --only 1 2                       # 番号 1 と 2 だけ(先頭から続く番号だけ指定できる。最初の試しに)
+    ~/lerobot-work/lerobot/.venv/bin/python scripts/real_run_plan.py --plan outputs/reach_plan_r1b.json --refine 1   # 関節の読みによる補正を 1 回入れる
 """
 import argparse
 import json
@@ -29,6 +30,8 @@ JOINTS_FILE = ROOT / "outputs" / "real_joints.json"
 parser = argparse.ArgumentParser()
 parser.add_argument("--plan", default=str(ROOT / "outputs" / "reach_plan.json"))
 parser.add_argument("--only", type=int, nargs="+", help="この番号の点だけ動かす(最初の試し用)")
+parser.add_argument("--refine", type=int, default=0,
+                    help="関節の読みによる補正の回数。動いたあと、実際の読みと指令の差(サーボが指令に届かない分。重さによる定常偏差)を、指令に足して、もう一度送る。0 = しない")
 parser.add_argument("--settle", type=float, default=1.5, help="動いたあと、止まるのを待つ秒数")
 parser.add_argument("--venv-python", default=str(ROOT / ".venv" / "bin" / "python"), help="撮影・記録に使う、このプロジェクトの環境の python")
 args = parser.parse_args()
@@ -38,6 +41,10 @@ targets = [t for t in plan["targets"] if not args.only or t["id"] in args.only]
 if not targets:
     raise SystemExit("動かす点が無い")
 home = plan["home"]
+# --only は、計画の「先頭から続く番号」だけ許す。計画の経路は、番号の順に動くことを前提に、sim で安全を確認してあるため(飛ばすと、確認していない経路になる)。
+all_ids = [t["id"] for t in plan["targets"]]
+if [t["id"] for t in targets] != all_ids[:len(targets)]:
+    raise SystemExit(f"--only は、先頭から続く番号(例: {all_ids[:2]})だけ指定できます。経路の安全は、番号の順に動くことを前提に確認してあります")
 
 
 def webcam_present():
@@ -75,6 +82,19 @@ try:
         move_to(robot, current, goal, t["seconds"])
         current = goal
         time.sleep(args.settle)  # 止まるのを待つ
+        for it in range(args.refine):
+            # 関節の読みによる補正(エンコーダの読みで、サーボの定常偏差を打ち消す)。pan・lift・elbow・wrist_flex だけ。roll と gripper は触らない。
+            now = robot.get_observation()
+            diff = {k: goal[k] - now[k] for k in ("shoulder_pan.pos", "shoulder_lift.pos", "elbow_flex.pos", "wrist_flex.pos")}
+            if max(abs(v) for v in diff.values()) < 0.3:
+                break  # 0.3° 未満なら、十分に届いている
+            corr = dict(current)
+            for k, v in diff.items():
+                corr[k] = goal[k] + max(-3.0, min(3.0, v))  # 差を、指令に足す。一度に 3° までに抑える(max/min で範囲を切る。[頻度] numpy を使わない簡単な書き方)
+            print("  補正" + str(it + 1) + ": " + ", ".join(f"{k.split('.')[0][:9]} {v:+.1f}°" for k, v in diff.items()) + " を指令に足して、もう一度送る")
+            move_to(robot, current, corr, 1.5)
+            current = corr
+            time.sleep(1.0)
         obs = robot.get_observation()
         JOINTS_FILE.write_text(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "joints": {n: float(obs[f"{n}.pos"]) for n in JOINTS}},
                                           ensure_ascii=False, indent=2))

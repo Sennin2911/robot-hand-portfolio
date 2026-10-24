@@ -34,8 +34,15 @@ parser.add_argument("--tip-z", type=float, default=0.06, help="目標の手先(g
 parser.add_argument("--n", type=int, default=8, help="目標の点の数")
 parser.add_argument("--tag", default="R1", help="この計画の名前。記録するサンプルは「<tag>_<番号>」")
 parser.add_argument("--correct-from", help="補正の元になる、前の計画(json)。指定すると、その測定結果で目標を補正する")
+parser.add_argument("--clone-from", help="前の計画(json)の目標・指令値・経路をそのまま写し、名前(--tag)だけ変えて保存する(同じ点で、別の条件の試験をするとき。カメラは使わない)")
 parser.add_argument("--out", default=str(ROOT / "outputs" / "reach_plan.json"))
 args = parser.parse_args()
+if args.clone_from:
+    clone = json.loads(Path(args.clone_from).read_text())
+    clone["tag"] = args.tag
+    Path(args.out).write_text(json.dumps(clone, ensure_ascii=False, indent=2))
+    print(f"{args.clone_from} を、名前 {args.tag} で {args.out} に写した({len(clone['targets'])} 点)")
+    sys.exit(0)
 if args.tip_z < 0.05:
     sys.exit("--tip-z は 0.05 m 以上にしてください(安全のため)")
 
