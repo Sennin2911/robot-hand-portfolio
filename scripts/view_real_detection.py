@@ -19,7 +19,8 @@ sys.path.insert(0, str(ROOT / "src"))
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 from hand_sim.real_camera import load_camera, undistort_image  # noqa: E402
-from hand_sim.vision import find_cube_pose  # noqa: E402
+from hand_sim.aruco_marker import detect_markers  # noqa: E402
+from hand_sim.vision import find_cube_pose_hsv  # noqa: E402
 from hand_sim.webcam import grab_frame, list_cameras, set_manual_exposure  # noqa: E402
 
 parser = argparse.ArgumentParser()
@@ -47,9 +48,24 @@ fixed = undistort_image(img, cam["K"], cam["dist"])  # 歪みを補正(以降は
 
 annotated = cv2.cvtColor(fixed, cv2.COLOR_RGB2BGR)  # 保存・描画は OpenCV なので、BGR に戻す
 draw_color = {"red": (0, 0, 255), "green": (0, 200, 0), "blue": (255, 0, 0)}  # BGR の順での、印の色
+# 探す範囲(ROI)= 机の板のマーカーの周り。画像の隅の赤い袋やケーブルを、立方体と間違えないため。
+# マーカー(ID 1〜6)の角を全部囲む凸包を、中心から 2.2 倍に広げた範囲にする(立方体は、板の上や、そのすぐ外に置く想定)。
+roi = None
+board = {i: m for i, m in detect_markers(fixed, cam["K"], np.zeros(5), 0.030).items() if 1 <= i <= 6}  # 補正済みの画像なので、歪みは 0
+if board:
+    pts = np.vstack([m["corners"] for m in board.values()]).astype(np.float32)
+    hull = cv2.convexHull(pts).reshape(-1, 2)
+    hull = hull.mean(axis=0) + (hull - hull.mean(axis=0)) * 2.2
+    roi = np.zeros(fixed.shape[:2], np.uint8)
+    cv2.fillConvexPoly(roi, hull.astype(np.int32), 1)
+    roi = roi.astype(bool)
+    cv2.polylines(annotated, [hull.astype(np.int32)], True, (0, 255, 255), 2)  # 探した範囲を黄色の線で描く
+    print(f"探す範囲: 板のマーカー {len(board)} 個の周り")
+else:
+    print("警告: 板のマーカーが見えないので、画像全体から探す(袋などを間違えやすい)")
 found = 0
 for color in ("red", "green", "blue"):
-    pose = find_cube_pose(fixed, color)
+    pose = find_cube_pose_hsv(fixed, color, roi)
     if pose is None:
         print(f"{color:5s}: 見つからない")
         continue
@@ -61,4 +77,4 @@ for color in ("red", "green", "blue"):
 out = ROOT / "outputs" / "real_detect.png"
 cv2.imwrite(str(out), annotated)
 print(f"保存: {out.relative_to(ROOT)}(歪みを補正した画像に、見つけた位置を描いた。{found} 色)")
-print("※ 色検出は、sim の画像で決めた条件(その色のチャンネルが 100 超で、他が 0.4 倍未満)。実機の照明では、色が合わないことがある(その場合は、露出・条件を調整する)")
+print("※ 色検出は、色相(HSV)で判定。範囲は vision.py の _HSV_RANGES。照明で色がずれたら、ここを調整する")

@@ -185,3 +185,39 @@ def find_cube_pose(img, color):
         return None
     v_idx, u_idx = np.nonzero(mask)
     return ((u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2, estimate_square_yaw(mask))
+
+
+# ---- 実機のカメラ用: 色相(HSV)で立方体を見つける(2026-10-24)----
+# sim 用の color_mask は「その色のチャンネルが 100 超、他が 0.4 倍未満」。実機の立方体は、つや消しで暗く(緑は G が 88 ほど)、
+# 赤は少しピンク(G/R が 0.42)なので、この条件では 1 つも通らなかった。実機では、明るさに左右されにくい「色相」で決める。
+# HSV: H = 色相(OpenCV では 0〜179。赤 = 0 付近と 179 付近、緑 ≈ 60、青 ≈ 120)、S = 彩度(色の濃さ)、V = 明るさ。[頻度] 実機の色検出では定番
+# 実機で測った立方体の色相: 赤 173〜174、緑 53〜60、青 111。机(木)は 13、紙は彩度 18 なので、重ならない。
+_HSV_RANGES = {  # color: (色相の下限, 上限, 彩度の下限, 明るさの下限)。赤は 0 をまたぐので、下限 > 上限で表す
+    "red": (160, 6, 90, 70),
+    "green": (40, 85, 45, 40),
+    "blue": (100, 125, 90, 40),
+}
+
+
+def color_mask_hsv(img_rgb, color):
+    """img_rgb(RGB の順)の中で、color("red"、"green"、"blue")の立方体の色の画素が True のマスクを返す。"""
+    import cv2  # 実機用の関数だけが使うので、ここで import する(sim 側の読み込みを軽く保つため)
+
+    hsv = cv2.cvtColor(np.ascontiguousarray(img_rgb), cv2.COLOR_RGB2HSV)
+    h, sat, val = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
+    lo, hi, s_min, v_min = _HSV_RANGES[color]
+    in_hue = (h >= lo) | (h <= hi) if lo > hi else (h >= lo) & (h <= hi)
+    return in_hue & (sat >= s_min) & (val >= v_min)
+
+
+def find_cube_pose_hsv(img_rgb, color, roi_mask=None):
+    """find_cube_pose の実機版(色相で判定)。roi_mask(True の範囲だけ探す。机の上など)を渡すと、その外の同じ色(袋・ケーブル等)を無視する。"""
+    mask = color_mask_hsv(img_rgb, color)
+    if roi_mask is not None:
+        mask = mask & roi_mask
+    mask = ndimage.binary_opening(mask, iterations=2)  # 細かいノイズ(1〜2 画素の点)を消す
+    mask = _largest_component(mask)
+    if mask is None or mask.sum() < 200:  # 実機は画像が大きい(1080p)ので、sim より大きい値にする
+        return None
+    v_idx, u_idx = np.nonzero(mask)
+    return ((u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2, estimate_square_yaw(mask))
