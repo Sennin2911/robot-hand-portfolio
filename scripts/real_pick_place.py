@@ -16,6 +16,7 @@
 """
 import argparse
 import json
+import subprocess
 import time
 from pathlib import Path
 
@@ -27,6 +28,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--color", required=True, choices=["red", "green", "blue"])
 parser.add_argument("--until", type=int, default=8, help="この段階までで止める(1〜8)")
 parser.add_argument("--refine", type=int, default=0, help="関節の読みによる補正の回数(動いたあと、読みと指令の差を指令に足す)。0 = しない")
+parser.add_argument("--record", action="store_true",
+                    help="段階 1 と 2 で止まったとき、手の板をカメラで撮って、手先の実際の位置を記録する(labelは PICK_<色>_<段階>)。analyze_grasp_offset.py で、立方体との位置関係を調べる。右側(手の板が映る位置)だけ")
 parser.add_argument("--speed", type=float, default=1.0, help="動かす速さの倍率(2 なら、計画の秒数の半分で動かす)。降下(2、6)は、安全のため 1.5 倍までに抑える")
 parser.add_argument("--settle", type=float, default=1.5, help="動いたあと、止まるのを待つ秒数")
 args = parser.parse_args()
@@ -82,6 +85,12 @@ try:
                 time.sleep(1.0)
         last = i
         obs = robot.get_observation()
+        if args.record and st["name"][0] in "12":
+            (ROOT / "outputs" / "real_joints.json").write_text(json.dumps(
+                {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "joints": {n: float(obs[f"{n}.pos"]) for n in JOINTS}}, ensure_ascii=False, indent=2))
+            r = subprocess.run([str(ROOT / ".venv" / "bin" / "python"), str(ROOT / "scripts" / "record_hand_sample.py"),
+                                "--label", f"{plan['tag']}_{st['name'][0]}", "--joints-file-only"], capture_output=True, text=True)  # 別プロセスで、撮影と記録を行う
+            print("  記録: " + (r.stdout.strip() or r.stderr.strip()).splitlines()[-1])
         print("  関節の読み: " + ", ".join(f"{n[:6]} {obs[n + '.pos']:.1f}" for n in JOINTS))
         if i == args.until or st["name"][0] in "237":
             input("  目で見て、様子(位置・立方体・指)を確認したら Enter: ")
