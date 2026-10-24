@@ -7,6 +7,7 @@
     .venv/bin/python scripts/run_sorting_trials.py --cam-err-mm 10 0            # カメラの位置を x 方向に 10 mm ずらして信じる
     .venv/bin/python scripts/run_sorting_trials.py --noise-px 2 --tag noise2    # 画素位置に標準偏差 2 画素のノイズ
     .venv/bin/python scripts/run_sorting_trials.py --cam-err-mm 30 0 --calibrate --tag camx30_cal   # 較正してから試験(手の目印でカメラの位置を求め直す)
+    .venv/bin/python scripts/run_sorting_trials.py --pos-sigma-mm 2 --pos-bias-mm 1 -1 --z-bias-mm -2 --yaw-sigma-deg 3 --tag real_nominal   # 実機で測った誤差を入れる
 記録は outputs/sorting_<tag>.csv に出る(--tag を省略すると baseline)。
 """
 import argparse
@@ -32,6 +33,11 @@ parser.add_argument("--seed", type=int, default=0, help="乱数の種(同じ種�
 parser.add_argument("--cam-err-mm", type=float, nargs=2, default=[0.0, 0.0], metavar=("DX", "DY"), help="信じているカメラの位置の、本当の位置からのずれ [mm]")
 parser.add_argument("--noise-px", type=float, default=0.0, help="画素位置に足すランダムなずれ(標準偏差)[画素]")
 parser.add_argument("--calibrate", action="store_true", help="試験の前に、手の目印でカメラの位置と視野角を求め直す(較正)。--cam-err-mm は、較正の出発点(信じている位置)になる")
+parser.add_argument("--pos-sigma-mm", type=float, default=0.0, help="見つけた位置に足すランダムなずれ(x, y それぞれの標準偏差)[mm]。到達・位置の出し方の誤差を、まとめて表す")
+parser.add_argument("--pos-bias-mm", type=float, nargs=2, default=[0.0, 0.0], metavar=("DX", "DY"), help="見つけた位置に足す偏り [mm]")
+parser.add_argument("--z-bias-mm", type=float, default=0.0, help="掴む高さの偏り [mm](負 = 低く掴む)")
+parser.add_argument("--yaw-sigma-deg", type=float, default=0.0, help="向きに足すランダムなずれ(標準偏差)[度]")
+parser.add_argument("--yaw-bias-deg", type=float, default=0.0, help="向きの偏り [度]")
 parser.add_argument("--retries", type=int, default=1, help="掴めなかったときの、やり直しの回数")
 parser.add_argument("--tag", default="baseline", help="記録のファイル名に付ける名前")
 args = parser.parse_args()
@@ -51,9 +57,13 @@ if args.calibrate:
     print(f"較正: 目印 {n_used} 点 → 位置 {np.round(est_pos, 4)} m(本当の値との差 x,y = {np.linalg.norm(est_pos[:2] - true_pos[:2]) * 1000:.2f} mm、"
           f"z = {(est_pos[2] - true_pos[2]) * 1000:+.1f} mm)、視野角 {est_fovy:.2f}°(本当の値 {true_fovy:.0f}°)、再投影誤差 {rms:.2f} 画素")
 
+err_model = None
+if args.pos_sigma_mm or any(args.pos_bias_mm) or args.z_bias_mm or args.yaw_sigma_deg or args.yaw_bias_deg:
+    err_model = {"pos_sigma_mm": args.pos_sigma_mm, "pos_bias_mm": tuple(args.pos_bias_mm), "z_bias_mm": args.z_bias_mm,
+                 "yaw_sigma_deg": args.yaw_sigma_deg, "yaw_bias_deg": args.yaw_bias_deg}  # 実機で測った誤差(docs/reach_test.md)を入れる
 records = []
 for ep in range(args.episodes):
-    for rec in run_episode(model, renderer, rng, cam_err, args.noise_px, args.retries, cam_model=cam_model):
+    for rec in run_episode(model, renderer, rng, cam_err, args.noise_px, args.retries, cam_model=cam_model, err_model=err_model):
         rec["episode"] = ep
         records.append(rec)
 
