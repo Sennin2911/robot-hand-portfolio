@@ -197,7 +197,7 @@
   手の板とブロックを同じカメラで測るので、2 つに共通の誤差や、実機と sim の指の形の違いは、見えない。**原因は未特定**(指の面の位置、指の開き幅、ブロックの検出の偏り、手の板の変換のどれか)。
   位置 1 の解析は、記録が上書きされず、別の実行のデータと突き合わせた結果で無効(手先が位置 2 と mm まで同じだった)。
 - **暗くなった原因**: `detect_cubes_world.py` は露出を設定せず、カメラに残った前回の手動設定(露出 200、gain 0)で撮る。部屋が暗くなると、色の判定が通らず、3 色とも見つからない。
-  `v4l2-ctl -d /dev/video2 -c exposure_time_absolute=600,gain=32` で上げる。**検出に失敗しても、前回の `cubes_detected.json` が残り、計画が古い位置で作られる**(未対策)。
+  `v4l2-ctl -d /dev/video2 -c exposure_time_absolute=600,gain=32` で上げる。検出に失敗しても前回の `cubes_detected.json` が残り、古い位置で計画が作られていた → **`detect_cubes_world.py` は、実行の最初に古い結果を消す**ようにした(失敗すると結果が無く、`plan_pick_test.py` が「検出し直す」と案内して止まる。実機のカメラでは未確認)。
 - **案 A を実装(実機では未確認。合成データで、更新と反映は確認)**: 指を閉じた直後(段階 3)に、手の板とブロックを同じ画像で測り、閉じた指の中のブロックの位置(手の座標)を sim と比べる。差の z(開閉の向き)を、
   `calibration/grasp_site_offset.json` に貯める(直近 10 回の中央値、上限 ±12 mm、±25 mm 超は測り間違いとして捨てる)。次の `plan_pick_test.py` が、自動で `CUBE_IN_SITE` と `CUBE_IN_HAND` に足す。
   部品: `src/hand_sim/grasp_calibration.py`、`cube_world.py`、`scripts/update_grasp_offset.py`、`record_hand_sample.py --detect-cube`、`so101_grasp.plan_for_cube(site_offset=)`。

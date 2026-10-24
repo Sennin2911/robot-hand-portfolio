@@ -35,7 +35,10 @@ REST = {"shoulder_pan.pos": -5.9, "shoulder_lift.pos": -103.8, "elbow_flex.pos":
 LIM = {"shoulder_pan": 119.1, "shoulder_lift": 106.1, "elbow_flex": 97.3, "wrist_flex": 111.9}  # 実機の可動域の半分
 MARGIN = 8.0  # 可動域の端から離す [度]
 
-det = json.loads((ROOT / "outputs" / "cubes_detected.json").read_text())["cubes"]
+det_file = ROOT / "outputs" / "cubes_detected.json"
+if not det_file.exists():  # detect_cubes_world.py は、検出に失敗すると、古い結果を消す(古い位置で計画を作らないため)
+    sys.exit("検出結果が無い(検出に失敗した、または、まだ検出していない)。.venv/bin/python scripts/detect_cubes_world.py をやり直す。暗いときは露出を上げる")
+det = json.loads(det_file.read_text())["cubes"]
 if args.color not in det:
     sys.exit(f"{args.color} の立方体が検出されていない(detect_cubes_world.py をもう一度実行する)")
 cube = det[args.color]

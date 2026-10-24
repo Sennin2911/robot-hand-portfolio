@@ -28,6 +28,10 @@ parser.add_argument("--extend-down", type=int, default=0, metavar="PX",
 args = parser.parse_args()
 
 CUBE_M = 0.030  # 立方体の 1 辺(ノギスで測った値)
+# 前回の検出結果を、先に消す。今回の検出が途中で失敗しても(暗くて見つからない、カメラが読めない、マーカーが足りないなど)、
+# 古い位置が残って、plan_pick_test.py がそれで計画を作ってしまわないため。成功した色だけが、最後に書き直される。
+# unlink(missing_ok=True): ファイルを消す。無くてもエラーにしない。[頻度] 「あれば消す」の定番
+(ROOT / "outputs" / "cubes_detected.json").unlink(missing_ok=True)
 cam = load_camera()
 device = next(devs[0] for name, devs in list_cameras() if "WebCamera" in name)
 fixed = undistort_image(grab_frame(device), cam["K"], cam["dist"])
