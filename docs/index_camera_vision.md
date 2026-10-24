@@ -7,10 +7,11 @@
 | 何を合わせるか | 測るもの | 道具 | 状態 |
 |---|---|---|---|
 | ① カメラ自身の性質(内部パラメータ) | 焦点距離 fx, fy、中心 cx, cy、歪み | チェスボード | **完了**(誤差 0.275 画素) |
-| ② カメラの置き場所(外部パラメータ) | カメラの位置と向き(机・ロボットから見て) | 固定の目印、または手の目印 | **未**(K 版の部品を作る) |
-| ③ 腕のずれ(関節角のオフセット) | sim と実機の、関節ごとの角度の差 | 手の ArUco(外せる板) | 板の余白を直して再撮影の段階 |
+| ② カメラの置き場所(外部パラメータ) | カメラの位置と向き(机・ロボットから見て) | 机に固定した ArUco の板(ID 1〜6) | **完了**(高さ約 40 cm。毎回の撮影で板から求める。再投影誤差 0.55 画素、机の上の位置は 1 mm 以内) |
+| ③ 腕のずれ(関節角のオフセット) | sim と実機の、関節ごとの角度の差 | 手の ArUco(ID 0、外せる板) | **完了**(`OFFSET_DEG` に反映。手先の位置は sim と 1〜3 mm で一致) |
 
 流れ: ① → 画像を補正 → ② → 立方体の画素が、ロボット座標に直る → 掴める。③ は腕そのものの確認で、別の作業。
+残っているのは、実際の立方体での色検出の確認と、実機での仕分け(立方体の到着待ち)。
 
 ## 読む順番(おすすめ)
 1. **`vision_basics.md`**(347 行): 「色で探す」「最大の塊」の考え方。画素 → 世界座標の換算(`pixel_to_world`)の基本。**まずここ**。
@@ -20,6 +21,12 @@
 5. **`camera_placement.md`**(104 行): カメラを置く場所の調査(sim で 12 通り)。結論は、前側の斜め上、高さ 40〜90 cm、後ろ側は不可。
 6. **`aruco_markers.md`**(53 行): 手に付ける ArUco の検出。**白い余白(5 mm 以上)が要る**理由もここ。
 7. **`dot_markers.md`**(50 行): 色シール方式(保留中)。貼り位置の測り誤差に弱い。
+
+## 実機の測定と結果(② ③ の後)
+- `offset_calibration.md`(6 章): 関節オフセットの測り方と結果。
+- `reach_test.md`: 到達精度のテスト(関節の読みで補正すると水平 1.6 mm、高さ 2.1 mm)と、机の上の位置の精度の見積もり。
+- `sorting_real_errors.md`: 実機の誤差を入れた sim の仕分け(300 個すべて成功。弱いのは、掴む高さが +4 mm 以上高くずれること)。
+- `measurements_needed.md`: 作者に測ってもらう寸法の一覧(状態つき)。
 
 ## 関連(読まなくても進められる)
 - `detector_swap.md`: 検出器(色 / 塊 / モデル)を差し替えられる形にした話。
@@ -46,8 +53,9 @@
 | 実機カメラの補正・K を使った換算 | `src/hand_sim/real_camera.py` |
 | 任意の位置・向きのカメラの投影と較正 | `src/hand_sim/camera_pose.py`、`src/hand_sim/calibration.py` |
 | ArUco / 色シールの検出 | `src/hand_sim/aruco_marker.py`、`src/hand_sim/dot_marker.py` |
-| 実機で見るスクリプト | `scripts/view_real_detection.py`、`view_real_markers.py`、`view_real_dots.py` |
-| 答え合わせ | `scripts/check_vision.py`、`check_calibration.py`、`check_intrinsics.py`、`check_real_camera.py`、`check_aruco.py` |
+| 実機で見るスクリプト | `scripts/view_real_detection.py`、`view_real_markers.py`、`view_real_dots.py`、`view_real_board.py` |
+| 机の板・手の板・到達テスト | `src/hand_sim/fixed_board.py`、`hand_marker.py`、`scripts/record_hand_sample.py`、`fit_real_offsets.py`、`real_run_plan.py`、`analyze_reach_test.py` |
+| 答え合わせ | `scripts/check_vision.py`、`check_calibration.py`、`check_intrinsics.py`、`check_real_camera.py`、`check_aruco.py`、`check_hand_marker.py`、`check_desk_localization.py` |
 
 ## 分からない所があったら
 どの文書の、どの部分が分からないかを教えてもらえれば、図や具体例で説明し直す。
