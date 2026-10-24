@@ -11,7 +11,7 @@ fit_pan_sweep.py(肩の軸の位置を、測定に頼らず求める)に必要�
     cd ~/ドキュメント/robot-hand-portfolio
     ~/lerobot-work/lerobot/.venv/bin/python scripts/real_pan_sweep.py
     ~/lerobot-work/lerobot/.venv/bin/python scripts/real_pan_sweep.py --deltas 0 20 40 60 --seconds 4
-    ~/lerobot-work/lerobot/.venv/bin/python scripts/real_pan_sweep.py --tag B --deltas 0 30 60   # 腕の形を変えて、別の名前(B)で記録する
+    ~/lerobot-work/lerobot/.venv/bin/python scripts/real_pan_sweep.py --tag B --pose -7 2 95 --deltas 0 30 60   # 形(lift, elbow, wrist_flex)を指定して、自動で動かし、記録する
 """
 import argparse
 import json
@@ -28,6 +28,11 @@ JOINTS_FILE = ROOT / "outputs" / "real_joints.json"
 parser = argparse.ArgumentParser()
 parser.add_argument("--deltas", type=float, nargs="+", default=[0, 15, 30, 45, 60], help="開始時の pan からの、右への回転量(度)。先頭は 0 にする")
 parser.add_argument("--tag", default="sweep", help="この腕の形の名前(例: B、down)。サンプルの名前は「<tag>_+0」のようになる。形ごとに変えること(同じ名前は上書きされる)")
+parser.add_argument("--pose", type=float, nargs=3, metavar=("LIFT", "ELBOW", "WRIST_FLEX"),
+                    help="腕の形(shoulder_lift, elbow_flex, wrist_flex の読み。度。real_read_joints.py と同じ値)。指定すると、まずこの形まで自動で動かす(pan は --pan0、wrist_roll は 0、gripper はそのまま)。"
+                         "省略すると、今の形のまま pan だけを振る")
+parser.add_argument("--pan0", type=float, default=0.0, help="--pose を使うときの、pan の開始の値(度)。0 = 正面(OFFSET の分、右へ 4.4° 向く)")
+parser.add_argument("--pose-seconds", type=float, default=8.0, help="--pose の形まで動かす秒数(長いほど、ゆっくり動く)")
 parser.add_argument("--seconds", type=float, default=3.0, help="1 つの位置へ動かす秒数")
 parser.add_argument("--settle", type=float, default=1.0, help="動いたあと、止まるのを待つ秒数")
 parser.add_argument("--venv-python", default=str(ROOT / ".venv" / "bin" / "python"), help="撮影・記録に使う、このプロジェクトの環境の python")
@@ -54,13 +59,38 @@ try:
     start = {k: v for k, v in robot.get_observation().items() if k.endswith(".pos")}
     pan0 = start["shoulder_pan.pos"]
     lo, hi = joint_limits(robot, "shoulder_pan")
-    bad = [d for d in args.deltas if not (lo + MARGIN <= pan0 + d <= hi - MARGIN)]
+    pan_base = args.pan0 if args.pose is not None else pan0  # --pose のときは、動かしたあとの pan(--pan0)が基準
+    bad = [d for d in args.deltas if not (lo + MARGIN <= pan_base + d <= hi - MARGIN)]
     if bad:
-        print(f"動かさずに終了します。pan の目標 {[round(pan0 + d, 1) for d in bad]} は、可動域 [{lo:.1f}, {hi:.1f}] の端に近い。開始の pan({pan0:.1f})を変えるか、--deltas を減らす")
+        print(f"動かさずに終了します。pan の目標 {[round(pan_base + d, 1) for d in bad]} は、可動域 [{lo:.1f}, {hi:.1f}] の端に近い。開始の pan({pan0:.1f})を変えるか、--deltas を減らす")
         raise SystemExit(1)
-    print("開始姿勢:", {k: round(v, 1) for k, v in start.items()})
-    print("計画(pan だけを動かす。他の関節は保つ): " + ", ".join(f"{pan0 + d:.1f}°" for d in args.deltas))
-    input("腕を支え、動く範囲に物が無いことを確認したら Enter(やめるなら Ctrl+C): ")
+    home = dict(start)  # 最初の姿勢。終了時に、ここへ戻る
+    if args.pose is not None:
+        # 指定された形の、可動域の確認(端から MARGIN 以内なら、何も動かさず止まる)。
+        shape = dict(start)
+        shape.update({"shoulder_pan.pos": args.pan0, "shoulder_lift.pos": args.pose[0], "elbow_flex.pos": args.pose[1],
+                      "wrist_flex.pos": args.pose[2], "wrist_roll.pos": 0.0})
+        too_close = []
+        for name in ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex"):
+            lo_j, hi_j = joint_limits(robot, name)
+            if not (lo_j + MARGIN <= shape[f"{name}.pos"] <= hi_j - MARGIN):
+                too_close.append(f"{name}: {shape[f'{name}.pos']:.1f} は可動域 [{lo_j:.1f}, {hi_j:.1f}] の端に近い")
+        if too_close:
+            print("動かさずに終了します。\n  " + "\n  ".join(too_close))
+            raise SystemExit(1)
+        print("開始姿勢 → 指定の形(度):")
+        for name in JOINTS:
+            print(f"  {name:14s} {start[f'{name}.pos']:7.1f} -> {shape[f'{name}.pos']:7.1f}")
+        print(f"この形まで {args.pose_seconds:.0f} 秒かけて動かし、そこから pan を右へ " + ", ".join(f"{d:.0f}°" for d in args.deltas) + " 回して記録する。終わると、最初の姿勢へ戻る")
+        input("腕を支え、動く範囲(机、板、カメラ、ケーブル)に物が無いことを確認したら Enter(やめるなら Ctrl+C): ")
+        move_to(robot, start, shape, args.pose_seconds)  # 関節ごとに直線で動かす(sim で、机から 76 mm 以上離れることを確認済みの形)
+        time.sleep(1.5)
+        start = shape  # 以降の pan 振りは、この形が基準
+        pan0 = shape["shoulder_pan.pos"]
+    else:
+        print("開始姿勢:", {k: round(v, 1) for k, v in start.items()})
+        print("計画(pan だけを動かす。他の関節は保つ): " + ", ".join(f"{pan0 + d:.1f}°" for d in args.deltas))
+        input("腕を支え、動く範囲に物が無いことを確認したら Enter(やめるなら Ctrl+C): ")
 
     current = dict(start)
     n_ok = 0
@@ -83,7 +113,7 @@ finally:
     # 終了: 開始の姿勢に戻り、腕を支えてもらってから、トルクを切る(切ると腕は落ちる)。
     try:
         try:
-            move_to(robot, current, start, args.seconds)
+            move_to(robot, current, home, args.pose_seconds if args.pose is not None else args.seconds)
         except NameError:
             pass  # 動き出す前に終わった(current がまだ無い)ときは、戻す必要がない
         input("\n腕を支えたら Enter(このあとトルクが切れて、腕は落ちる): ")
