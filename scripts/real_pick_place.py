@@ -27,6 +27,7 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--color", required=True, choices=["red", "green", "blue"])
 parser.add_argument("--until", type=int, default=8, help="この段階までで止める(1〜8)")
 parser.add_argument("--refine", type=int, default=0, help="関節の読みによる補正の回数(動いたあと、読みと指令の差を指令に足す)。0 = しない")
+parser.add_argument("--speed", type=float, default=1.0, help="動かす速さの倍率(2 なら、計画の秒数の半分で動かす)。降下(2、6)は、安全のため 1.5 倍までに抑える")
 parser.add_argument("--settle", type=float, default=1.5, help="動いたあと、止まるのを待つ秒数")
 args = parser.parse_args()
 
@@ -58,7 +59,8 @@ try:
         else:
             print(f"\n--- {st['name']}")
         goal = dict(st["cmd"])
-        move_to(robot, current, goal, st["seconds"])
+        speed = min(args.speed, 1.5) if st["name"][0] in "26" else args.speed
+        move_to(robot, current, goal, max(0.8, st["seconds"] / speed))  # 速くしすぎないよう、1 回の動きは 0.8 秒以上かける
         current = goal
         time.sleep(args.settle)
         if st["name"][0] in "1256":  # 腕が動く段階だけ、関節の読みで補正(指だけ動かす 3、7 と、持ち上げ・上がる 4、8 は、しない)
@@ -90,6 +92,11 @@ finally:
                     up = {**via, "gripper.pos": current["gripper.pos"]}
                     move_to(robot, current, up, 3.0)
                     current = up
+                    if current["gripper.pos"] < plan["gripper_open"] - 5:  # 立方体を掴んだまま(指が閉じている)なら、真上で放す(5 cm ほどの高さ。休めの姿勢へ畳むと、立方体を挟みつぶすため)
+                        input("\n立方体を掴んだままです。真上で放します。下に手などが無いことを確認したら Enter: ")
+                        opened = {**current, "gripper.pos": plan["gripper_open"]}
+                        move_to(robot, current, opened, 1.5)
+                        current = opened
                 move_to(robot, current, {**plan["home"], "gripper.pos": current["gripper.pos"]}, plan.get("return_seconds", 8.0))
         except NameError:  # current が未定義(接続直後の失敗)のとき
             pass
