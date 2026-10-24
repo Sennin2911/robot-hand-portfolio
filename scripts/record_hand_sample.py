@@ -80,7 +80,7 @@ R_h, p_h = hand_pose_from_marker(R_m, p_m)
 samples = json.loads(SAMPLES_FILE.read_text()) if SAMPLES_FILE.exists() else []
 samples = [s for s in samples if s["label"] != args.label]  # 同じ名前は、上書きする
 samples.append({"label": args.label, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "joints": after, "hand_pos_m": p_h.tolist(),
-                "hand_R": R_h.tolist(), "camera_pos_m": cam_pos.tolist(), "board_reproj_px": err, "board_markers": n})
+                "hand_R": R_h.tolist(), "camera_pos_m": cam_pos.tolist(), "board_reproj_px": err, "board_markers": n, "frame": "sim_world"})  # frame: 座標の約束(sim の世界座標。原点は肩の軸の 38.8 mm 後ろ)
 SAMPLES_FILE.write_text(json.dumps(samples, ensure_ascii=False, indent=2))
 print(f"記録: {args.label}  関節角(度) " + ", ".join(f"{k} {v:.1f}" for k, v in after.items()))
 print(f"  手先(世界座標、mm) = {np.round(p_h * 1000, 1)}、板の再投影誤差 {err:.2f} 画素({n} 個)、撮影中の関節角の変化 最大 {moved:.2f}°。記録済みの組: {len(samples)} 個")

@@ -21,6 +21,11 @@ import mujoco  # noqa: E402
 import numpy as np  # noqa: E402
 from hand_sim.sim_real import JOINTS, real_to_sim  # noqa: E402
 
+model = mujoco.MjModel.from_xml_path(str(ROOT / "models/so101/so101_new_calib.xml"))
+data = mujoco.MjData(model)
+mujoco.mj_forward(model, data)
+# 想定する肩の軸の位置: sim の shoulder の位置(世界座標の原点ではなく、約 38.8 mm 前。fixed_board.py の注を参照)。画像の世界座標も、sim と同じ座標にしてある。
+AXIS = data.xpos[model.body("shoulder").id][:2].copy()
 samples = json.loads((ROOT / "outputs" / "hand_samples.json").read_text())
 if len(samples) < 3:
     sys.exit(f"姿勢が {len(samples)} 個しかない。3 個以上(pan を変えて)record_hand_sample.py で記録する")
@@ -36,8 +41,8 @@ A = np.column_stack([2 * P[:, 0], 2 * P[:, 1], np.ones(len(P))])
 center = np.array([a, b])
 radius = np.sqrt(c + a * a + b * b)
 resid = np.linalg.norm(P - center, axis=1) - radius  # 各点の、円からのずれ(半径方向) [m]
-print(f"\n(1) 円の中心(= 肩の軸、板の座標で想定した世界座標) = ({a * 1000:+.1f}, {b * 1000:+.1f}) mm。想定は (0, 0)")
-print(f"    → 板の位置の測定の誤差は、およそ x {-a * 1000:+.1f} mm、y {-b * 1000:+.1f} mm(十字の実際の位置 = 想定 + この値)")
+print(f"\n(1) 円の中心(= 肩の軸) = ({a * 1000:+.1f}, {b * 1000:+.1f}) mm。想定(sim の肩の軸)は ({AXIS[0] * 1000:+.1f}, {AXIS[1] * 1000:+.1f})")
+print(f"    → 板の位置の測定の誤差は、およそ x {(AXIS[0] - a) * 1000:+.1f} mm、y {(AXIS[1] - b) * 1000:+.1f} mm(十字の実際の位置 = 想定 + この値)")
 print(f"    円からのずれ(RMS) = {np.sqrt((resid**2).mean()) * 1000:.1f} mm(小さいほど、円に乗っている)")
 
 # (2) 円の中心から見た、各点の角度 [度](世界の x 軸から左回り)。pan との直線関係を調べる。
@@ -48,8 +53,6 @@ print(f"(2) 角度と pan の関係: 角度 = {slope:+.3f} × pan + {intercept:+
 print(f"    pan = 0 のとき、腕は、世界の x 軸から {intercept:+.1f}° の向き(OFFSET_DEG の pan = +4.4° なら、−4.4° のはず)")
 
 # (3) 半径: sim で、同じ関節角から出した手先の、肩の軸からの水平距離と比べる(OFFSET あり)
-model = mujoco.MjModel.from_xml_path(str(ROOT / "models/so101/so101_new_calib.xml"))
-data = mujoco.MjData(model)
 site_id = model.site("gripperframe").id
 sim_r = []
 for s in samples:
@@ -57,5 +60,5 @@ for s in samples:
     for j, name in enumerate(JOINTS):
         data.qpos[model.joint(name).qposadr] = q[j]
     mujoco.mj_forward(model, data)
-    sim_r.append(np.linalg.norm(data.site_xpos[site_id][:2]))  # 肩の軸(世界の原点)から、手先までの水平距離
+    sim_r.append(np.linalg.norm(data.site_xpos[site_id][:2] - AXIS))  # 肩の軸から、手先までの水平距離
 print(f"(3) 半径: 画像 {radius * 1000:.1f} mm、sim {np.mean(sim_r) * 1000:.1f} mm(OFFSET あり。姿勢ごとの差 {np.ptp(sim_r) * 1000:.1f} mm)")
