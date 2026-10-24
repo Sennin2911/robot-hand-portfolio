@@ -14,6 +14,7 @@
     ~/lerobot-work/lerobot/.venv/bin/python scripts/real_run_plan.py --plan outputs/reach_plan2.json  # 補正した計画
     ~/lerobot-work/lerobot/.venv/bin/python scripts/real_run_plan.py --only 1 2                       # 番号 1 と 2 だけ(先頭から続く番号だけ指定できる。最初の試しに)
     ~/lerobot-work/lerobot/.venv/bin/python scripts/real_run_plan.py --plan outputs/reach_plan_r1b.json --refine 1   # 関節の読みによる補正を 1 回入れる
+    ~/lerobot-work/lerobot/.venv/bin/python scripts/real_run_plan.py --plan outputs/pad_plan.json --refine 1 --no-record   # 置き場の真上へ(撮影せず、目で確認)
 """
 import argparse
 import json
@@ -32,6 +33,7 @@ parser.add_argument("--plan", default=str(ROOT / "outputs" / "reach_plan.json"))
 parser.add_argument("--only", type=int, nargs="+", help="この番号の点だけ動かす(最初の試し用)")
 parser.add_argument("--refine", type=int, default=0,
                     help="関節の読みによる補正の回数。動いたあと、実際の読みと指令の差(サーボが指令に届かない分。重さによる定常偏差)を、指令に足して、もう一度送る。0 = しない")
+parser.add_argument("--no-record", action="store_true", help="撮影・記録をしない(手の板がカメラに映らない位置、たとえば置き場の試験で使う)")
 parser.add_argument("--settle", type=float, default=1.5, help="動いたあと、止まるのを待つ秒数")
 parser.add_argument("--venv-python", default=str(ROOT / ".venv" / "bin" / "python"), help="撮影・記録に使う、このプロジェクトの環境の python")
 args = parser.parse_args()
@@ -52,7 +54,7 @@ def webcam_present():
     return "WebCamera" in out
 
 
-if not webcam_present():
+if not args.no_record and not webcam_present():
     raise SystemExit("ウェブカメラが USB で認識されていない。差し直してから、もう一度実行する。腕は動かしていない")
 
 robot = SO101Follower(SOFollowerRobotConfig(port="/dev/ttyACM0", id="my_follower_arm"))
@@ -98,6 +100,10 @@ try:
         obs = robot.get_observation()
         JOINTS_FILE.write_text(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "joints": {n: float(obs[f"{n}.pos"]) for n in JOINTS}},
                                           ensure_ascii=False, indent=2))
+        if args.no_record:
+            input(f"  点 {t['id']}({t.get('color', '')})に着いた。手先が目標の真上に来ているか、目で見て確かめたら Enter: ")
+            n_ok += 1
+            continue
         label = f"{plan['tag']}_{t['id']}"
         r = subprocess.run([args.venv_python, str(ROOT / "scripts" / "record_hand_sample.py"), "--label", label, "--joints-file-only"],
                            capture_output=True, text=True)  # 別プロセスで、撮影と記録を行う
