@@ -24,6 +24,8 @@ from hand_sim.so101_grasp import GRIP_CLOSE, GRIP_OPEN, plan_for_cube  # noqa: E
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--color", required=True, choices=["red", "green", "blue"])
+parser.add_argument("--hand-error", type=float, nargs=2, metavar=("DX_MM", "DY_MM"), default=(0.0, 0.0),
+                    help="実機で測った「手先 − 目標」のずれ(世界座標 x = 前、y = 左、mm)。指定すると、そのぶん反対へずらした目標で計画する(掴む位置・置く位置の両方)。例: 手先が目標より後ろへ 8 mm、右へ 5 mm → --hand-error -8 -5")
 args = parser.parse_args()
 
 PADS = {"green": (0.14, 0.17), "red": (0.07, 0.17), "blue": (0.21, 0.12)}  # 置き場の中心(plan_pad_test.py と同じ)
@@ -46,7 +48,10 @@ print(f"{args.color}: 位置 ({cube['x_m'] * 1000:.0f}, {cube['y_m'] * 1000:.0f}
 if r_cube > 0.23:
     sys.exit("肩の軸から 23 cm より遠い。手を真下に向けて届かない可能性が高いので、立方体をロボットに近づけて、検出し直す")
 
-poses, hand_yaw = plan_for_cube(model, np.array([cube["x_m"], cube["y_m"], CUBE_M / 2]), PADS[args.color], np.radians(cube["yaw_deg"]))
+err = np.array(args.hand_error) * 1e-3  # 手先 − 目標 のずれ [m]。目標からこの分を引けば、手先が本来の位置に来る(ずれが同じ向き・大きさで出る前提)
+if err.any():
+    print(f"手先のずれの補正: 目標を ({-err[0] * 1000:+.1f}, {-err[1] * 1000:+.1f}) mm ずらして計画する")
+poses, hand_yaw = plan_for_cube(model, np.array([cube["x_m"] - err[0], cube["y_m"] - err[1], CUBE_M / 2]), np.array(PADS[args.color]) - err, np.radians(cube["yaw_deg"]))
 g_lo, g_hi = model.joint("gripper").range
 
 
