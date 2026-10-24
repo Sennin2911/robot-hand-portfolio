@@ -210,14 +210,41 @@ def color_mask_hsv(img_rgb, color):
     return in_hue & (sat >= s_min) & (val >= v_min)
 
 
-def find_cube_pose_hsv(img_rgb, color, roi_mask=None):
-    """find_cube_pose の実機版(色相で判定)。roi_mask(True の範囲だけ探す。机の上など)を渡すと、その外の同じ色(袋・ケーブル等)を無視する。"""
+def find_cube_pose_hsv(img_rgb, color, roi_mask=None, return_mask=False):
+    """find_cube_pose の実機版(色相で判定)。roi_mask(True の範囲だけ探す。机の上など)を渡すと、その外の同じ色(袋・ケーブル等)を無視する。
+    同じ色の塊が複数あるとき(立方体と、アームの赤いケーブルなど)は、大きい順に見て、「立方体らしい形」の最初の塊を使う。
+    立方体らしい形 = 外接する四角形を、塊が 45% 以上埋める(細長いケーブルは、ここで落ちる)、縦横比が 0.5〜2。
+    return_mask=True なら、戻り値は ((u, v, yaw), 塊のマスク)(見つからなければ (None, None))。上面だけを取り出して向きを出すときに使う。"""
     mask = color_mask_hsv(img_rgb, color)
     if roi_mask is not None:
         mask = mask & roi_mask
     mask = ndimage.binary_opening(mask, iterations=2)  # 細かいノイズ(1〜2 画素の点)を消す
-    mask = _largest_component(mask)
-    if mask is None or mask.sum() < 200:  # 実機は画像が大きい(1080p)ので、sim より大きい値にする
-        return None
-    v_idx, u_idx = np.nonzero(mask)
-    return ((u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2, estimate_square_yaw(mask))
+    labels, n = ndimage.label(mask)
+    if n == 0:
+        return (None, None) if return_mask else None
+    sizes = ndimage.sum(mask, labels, index=range(1, n + 1))
+    for k in np.argsort(sizes)[::-1]:  # 大きい順(argsort は小さい順の番号を返すので、[::-1] で逆順にする)
+        if sizes[k] < 200:  # 実機は画像が大きい(1080p)ので、sim より大きい値にする
+            break
+        comp = labels == (int(k) + 1)
+        v_idx, u_idx = np.nonzero(comp)
+        w, h = u_idx.max() - u_idx.min() + 1, v_idx.max() - v_idx.min() + 1
+        if sizes[k] / (w * h) < 0.45 or not 0.5 <= w / h <= 2.0:
+            continue
+        pose = ((u_idx.max() + u_idx.min()) / 2, (v_idx.max() + v_idx.min()) / 2, estimate_square_yaw(comp))
+        return (pose, comp) if return_mask else pose
+    return (None, None) if return_mask else None
+
+
+def square_yaw_from_points(pts_xy):
+    """点の集まり pts_xy (N×2、世界座標 [m])が作る正方形に近い形の向き [度、0〜90 未満] を、x 軸から反時計回りで返す。
+    estimate_square_yaw(マスク用)と同じ考え方(外接する長方形の面積が最小になる角度)を、世界座標の点に使う。"""
+    best_theta, best_area = 0, np.inf
+    for theta in range(90):
+        t = np.radians(theta)
+        a = pts_xy @ np.array([np.cos(t), np.sin(t)])
+        b = pts_xy @ np.array([-np.sin(t), np.cos(t)])
+        area = (a.max() - a.min()) * (b.max() - b.min())
+        if area < best_area:
+            best_theta, best_area = theta, area
+    return float(best_theta)
