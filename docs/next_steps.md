@@ -80,6 +80,10 @@
 - マーカーの軸(aruco_marker の約束): x = 紙の右、y = 紙の**上**、z = 垂線。②で表すと x = +x、y = -z、z = +y。
 - `src/hand_sim/hand_marker.py`: `hand_pose_from_marker`(①のマーカー姿勢 → ①の手先姿勢)、`marker_pose_from_hand`(逆)。答え合わせ `scripts/check_hand_marker.py`(全 OK。往復、右手系、sim の部品との位置関係)。
 - 未確認: 実機の画像で、手先の位置が sim の値と合うか(`view_real_markers.py` の出力に、この変換をつなぐのはまだ)。`--side 30.0` で撮り直し、測定姿勢(手を真下)か確認する。
+- **固定の目印の板を作った(2026-10-24)**: `scripts/make_fixed_board.py` → `outputs/fixed_board_A4.pdf` と `.png`(A4 縦、ID 1〜6、30 mm、2 列×3 行)。配置は `src/hand_sim/fixed_board.py`
+  (板の座標: 原点 = 紙の十字、x = 右、y = 上。中心は ID1 (30,200)、ID2 (120,200)、ID3 (30,120)、ID4 (120,120)、ID5 (30,40)、ID6 (120,40) mm)。
+  作者が測るのは、板の原点(十字)の位置(ロボットの基準から x, y)、向き、高さだけ(measurements_needed.md の B を、この方式に置き換え)。
+  `board_marker_centers_world` で、各マーカーの世界座標が出る。次: 作者が印刷 → 硬い板に貼る → 土台と同じ板に固定 → 十字の位置を測る。
 - 次: 固定の目印(B)を受け取る → カメラ置き場所の較正 → 実機の手先位置と sim の比較(腕のずれの確認)。
 
 ### 次にやること(この順)
