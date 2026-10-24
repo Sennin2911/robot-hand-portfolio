@@ -31,7 +31,11 @@ parser.add_argument("--speed", type=float, default=1.0, help="動かす速さの
 parser.add_argument("--settle", type=float, default=1.5, help="動いたあと、止まるのを待つ秒数")
 args = parser.parse_args()
 
-plan = json.loads((ROOT / "outputs" / f"pick_plan_{args.color}.json").read_text())
+plan_file = ROOT / "outputs" / f"pick_plan_{args.color}.json"
+if not plan_file.exists():  # 計画が無いまま実行したときに、分かりやすい案内を出す(腕は動かしていない)
+    raise SystemExit(f"{plan_file.name} が無い。先に、立方体を検出して、計画を作る:\n"
+                     f"  .venv/bin/python scripts/detect_cubes_world.py\n  MUJOCO_GL=egl .venv/bin/python scripts/plan_pick_test.py --color {args.color}")
+plan = json.loads(plan_file.read_text())
 stages = plan["stages"][:args.until]
 ARM_KEYS = ("shoulder_pan.pos", "shoulder_lift.pos", "elbow_flex.pos", "wrist_flex.pos")
 robot = SO101Follower(SOFollowerRobotConfig(port="/dev/ttyACM0", id="my_follower_arm"))
