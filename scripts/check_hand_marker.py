@@ -39,7 +39,7 @@ check("(1) 回転行列: R^T R = 単位行列、行列式 = +1(右手系)",
 check("(2) マーカーの垂線(3 列目)= ②の +y", np.allclose(R[:, 2], [0, 1, 0]))
 check("(2) 紙の上(2 列目)= ②の -z", np.allclose(R[:, 1], [0, 0, -1]))
 check("(2) 紙の右(1 列目)= ②の +x(右手系から決まる)", np.allclose(R[:, 0], [1, 0, 0]))
-check("(2) 位置 = (-94.43, -20.5, -48.01) mm", np.allclose(T_HAND_MARKER * 1e3, [-94.43, -20.5, -48.01]))
+check("(2) 位置 = (-94.43, +20.5, -48.01) mm", np.allclose(T_HAND_MARKER * 1e3, [-94.43, 20.5, -48.01]))
 
 model = mujoco.MjModel.from_xml_path(str(ROOT / "models/so101/so101_new_calib.xml"))
 data = mujoco.MjData(model)
