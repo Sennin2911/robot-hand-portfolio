@@ -1,0 +1,82 @@
+"""【概要】腕を手で支えて作った 1 つの姿勢について、「関節角(実機から読む)」と「手先の位置(カメラの画像から)」を 1 組、outputs/hand_samples.json に足す。
+手順(1 回の実行で全部やる): 関節角を読む → 撮影 → 関節角をもう一度読む。前後の角度が 0.5° 以上違えば、撮影中に腕が動いたので、記録しない。
+関節角の読み取りは real_read_joints.py(LeRobot の環境で動くので、別のプロセスとして呼ぶ)。指令は出さず、トルクにも触れない。
+カメラが USB の不調で、認識・切断を繰り返していても、認識された合間に撮れるまで、何度か試す(最大 60 秒)。
+記録した組は、fit_pan_sweep.py(肩の軸の位置を求める)や、compare 系の確認に使う。
+
+使い方(この .venv で実行):
+    .venv/bin/python scripts/record_hand_sample.py --label pan0
+"""
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "src"))  # src フォルダを import の探索先に追加(詳しい意味は check_install.py を参照)
+
+import cv2  # noqa: E402
+import numpy as np  # noqa: E402
+from hand_sim.aruco_marker import detect_markers, marker_pose_in_world  # noqa: E402
+from hand_sim.fixed_board import SIDE_MM, camera_pose_from_board  # noqa: E402
+from hand_sim.hand_marker import hand_pose_from_marker  # noqa: E402
+from hand_sim.real_camera import load_camera  # noqa: E402
+from hand_sim.webcam import grab_frame, list_cameras, set_manual_exposure  # noqa: E402
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--label", required=True, help="この姿勢の名前(例: pan0、pan15)")
+parser.add_argument("--exposure", type=int, default=100, help="露出時間(0.1 ミリ秒単位)")
+parser.add_argument("--lerobot-python", default=str(Path.home() / "lerobot-work/lerobot/.venv/bin/python"), help="LeRobot の環境の python")
+args = parser.parse_args()
+
+JOINTS_FILE = ROOT / "outputs" / "real_joints.json"
+SAMPLES_FILE = ROOT / "outputs" / "hand_samples.json"
+
+
+def read_joints():
+    """real_read_joints.py を実行して、関節角 {名前: 値} を返す(別プロセス = LeRobot の環境)。"""
+    subprocess.run([args.lerobot_python, str(ROOT / "scripts" / "real_read_joints.py")], check=True, capture_output=True)  # check=True: 失敗したら例外にする
+    return json.loads(JOINTS_FILE.read_text())["joints"]
+
+
+def capture():
+    """ウェブカメラから 1 枚撮る。USB が切れていれば、認識されるまで待って、やり直す(最大 60 秒)。"""
+    t_end = time.time() + 60
+    while time.time() < t_end:
+        device = next((devs[0] for name, devs in list_cameras() if "WebCamera" in name), None)
+        if device:
+            try:
+                set_manual_exposure(device, args.exposure)
+                return grab_frame(device, settle_frames=15, timeout=8)
+            except Exception:  # 切断・タイムアウトなど。何が起きても、時間内ならやり直す(「何でも握りつぶす」書き方は普通は避けるが、ここは不安定な機器の再試行のため)
+                pass
+        time.sleep(1)
+    sys.exit("ウェブカメラから撮れなかった(USB の接続を確認する)")
+
+
+before = read_joints()
+img = capture()
+after = read_joints()
+moved = max(abs(before[k] - after[k]) for k in before if k != "gripper")
+if moved > 0.5:
+    sys.exit(f"撮影中に腕が動いた(関節角の変化 最大 {moved:.2f}°)。記録しない。腕を支えたまま、もう一度")
+
+cam = load_camera()
+found = detect_markers(img, cam["K"], cam["dist"], SIDE_MM / 1000)
+result = camera_pose_from_board(found, cam["K"], cam["dist"], SIDE_MM)
+if result is None or 0 not in found:
+    sys.exit(f"板(ID 1〜6)か手の板(ID 0)が見つからない(見つかった ID: {sorted(found)})。記録しない")
+cam_pos, cam_R, err, n = result
+R_m, p_m = marker_pose_in_world(found[0]["R"], found[0]["t"], cam_pos, cam_R)
+R_h, p_h = hand_pose_from_marker(R_m, p_m)
+
+samples = json.loads(SAMPLES_FILE.read_text()) if SAMPLES_FILE.exists() else []
+samples = [s for s in samples if s["label"] != args.label]  # 同じ名前は、上書きする
+samples.append({"label": args.label, "time": time.strftime("%Y-%m-%d %H:%M:%S"), "joints": after, "hand_pos_m": p_h.tolist(),
+                "hand_R": R_h.tolist(), "camera_pos_m": cam_pos.tolist(), "board_reproj_px": err, "board_markers": n})
+SAMPLES_FILE.write_text(json.dumps(samples, ensure_ascii=False, indent=2))
+print(f"記録: {args.label}  関節角(度) " + ", ".join(f"{k} {v:.1f}" for k, v in after.items()))
+print(f"  手先(世界座標、mm) = {np.round(p_h * 1000, 1)}、板の再投影誤差 {err:.2f} 画素({n} 個)、撮影中の関節角の変化 最大 {moved:.2f}°。記録済みの組: {len(samples)} 個")
