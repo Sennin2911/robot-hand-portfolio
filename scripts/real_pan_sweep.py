@@ -32,11 +32,20 @@ parser.add_argument("--venv-python", default=str(ROOT / ".venv" / "bin" / "pytho
 args = parser.parse_args()
 
 
+def webcam_present():
+    """ウェブカメラが USB に認識されているか。v4l2-ctl --list-devices の出力に "WebCamera" があるかで調べる(外部コマンドを呼ぶ: subprocess.run)。"""
+    out = subprocess.run(["v4l2-ctl", "--list-devices"], capture_output=True, text=True).stdout
+    return "WebCamera" in out
+
+
 def joints_of(obs):
     """get_observation の結果から、関節の値だけを {名前: 値} にして返す(カメラ等は除く)。"""
     return {name: float(obs[f"{name}.pos"]) for name in JOINTS}
 
 
+if not webcam_present():
+    # 動かし始めてから撮影に失敗すると、腕を動かした意味がない。先に確かめる(2026-10-24 に、USB が切れたまま動かして、記録が 0 個になった)
+    raise SystemExit("ウェブカメラが USB で認識されていない。差し直してから(v4l2-ctl --list-devices に WebCamera が出るまで)もう一度実行する。腕は動かしていない")
 robot = SO101Follower(SOFollowerRobotConfig(port="/dev/ttyACM0", id="my_follower_arm"))
 robot.connect()  # 接続するとトルクが入り、今の姿勢を保つ。接続中は、腕を手で支える
 try:
@@ -52,6 +61,7 @@ try:
     input("腕を支え、動く範囲に物が無いことを確認したら Enter(やめるなら Ctrl+C): ")
 
     current = dict(start)
+    n_ok = 0
     for d in args.deltas:
         goal = dict(start)  # dict(...): 辞書のコピー。他の関節は開始時のまま
         goal["shoulder_pan.pos"] = pan0 + d
@@ -65,11 +75,17 @@ try:
         r = subprocess.run([args.venv_python, str(ROOT / "scripts" / "record_hand_sample.py"), "--label", label, "--joints-file-only"],
                            capture_output=True, text=True)  # 別プロセスで、撮影と記録を行う。capture_output: 出力を受け取る
         print(r.stdout.strip() or r.stderr.strip())  # 成功なら標準出力、失敗なら標準エラーを表示。失敗しても、次の位置へ進む
+        n_ok += r.returncode == 0  # True は 1 として足せる(成功した数を数える)。[頻度] 数を数えるときの、ちょっとした書き方
+    print(f"\n記録に成功: {n_ok} / {len(args.deltas)} 位置")
 finally:
     # 終了: 開始の姿勢に戻り、腕を支えてもらってから、トルクを切る(切ると腕は落ちる)。
     try:
-        move_to(robot, current, start, args.seconds)
-    except NameError:
-        pass  # 動き出す前に終わった(current がまだ無い)ときは、戻す必要がない
-    input("\n腕を支えたら Enter(このあとトルクが切れて、腕は落ちる): ")
-    robot.disconnect()
+        try:
+            move_to(robot, current, start, args.seconds)
+        except NameError:
+            pass  # 動き出す前に終わった(current がまだ無い)ときは、戻す必要がない
+        input("\n腕を支えたら Enter(このあとトルクが切れて、腕は落ちる): ")
+    except (KeyboardInterrupt, EOFError):
+        print("入力が中断された。このまま切断する(トルクが切れて、腕は落ちる)")
+    finally:
+        robot.disconnect()  # 入力の途中で Ctrl+C を押しても、必ず切断する(入れ子の try/finally)
