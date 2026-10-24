@@ -2,8 +2,9 @@
 outputs/cubes_detected.json に保存する(掴む計画 plan_pick_test.py が読む)。画像は outputs/real_detect.png(印と探す範囲を描いたもの)。
 立方体の中心の高さは、1 辺(30 mm)の半分(15 mm)の面に当てて換算する。板のマーカーが 4 個未満しか見えなければ、何も保存しない。
 
-使い方(この .venv で実行): .venv/bin/python scripts/detect_cubes_world.py
+使い方(この .venv で実行): .venv/bin/python scripts/detect_cubes_world.py [--extend-down 120]
 """
+import argparse
 import json
 import sys
 from pathlib import Path
@@ -19,6 +20,13 @@ from hand_sim.real_camera import load_camera, pixel_to_world_plane_K, project_po
 from hand_sim.vision import find_cube_pose_hsv, square_yaw_from_points  # noqa: E402
 from hand_sim.webcam import grab_frame, list_cameras  # noqa: E402
 
+# コマンドラインの引数を受け取る仕組み。[頻度] スクリプトに「設定を変えて実行したい」ときの定番
+parser = argparse.ArgumentParser()
+parser.add_argument("--extend-down", type=int, default=0, metavar="PX",
+                    help="探す範囲(黄色の枠)の下の辺を、画像の下方向へ PX 画素広げる(ロボットの左側 = 画像の下。既定 0)。"
+                         "画像の下の端は、レンズの較正が届いていない範囲なので、広げるほど位置の精度が落ちうる")
+args = parser.parse_args()
+
 CUBE_M = 0.030  # 立方体の 1 辺(ノギスで測った値)
 cam = load_camera()
 device = next(devs[0] for name, devs in list_cameras() if "WebCamera" in name)
@@ -33,6 +41,8 @@ print(f"板のマーカー {n} 個、再投影誤差 {reproj:.2f} 画素")
 pts = project_points_K(np.vstack(list(board_marker_corners_world().values())), cam_pos, cam_R, cam["K"]).astype(np.float32)
 hull = cv2.convexHull(pts).reshape(-1, 2)
 hull = hull.mean(axis=0) + (hull - hull.mean(axis=0)) * 2.2  # 探す範囲(view_real_detection.py と同じ)
+hull[hull[:, 1] > hull[:, 1].mean(), 1] += args.extend_down  # 画像の下側の頂点(v が平均より大きい点)だけを、下へ動かす
+hull[:, 1] = np.clip(hull[:, 1], 0, fixed.shape[0] - 1)  # 画像の外へはみ出さないようにする
 roi = np.zeros(fixed.shape[:2], np.uint8)
 cv2.fillConvexPoly(roi, hull.astype(np.int32), 1)
 roi = roi.astype(bool)

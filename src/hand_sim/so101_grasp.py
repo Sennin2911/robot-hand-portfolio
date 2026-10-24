@@ -172,14 +172,18 @@ def grasp_site_pose(cube_pos, yaw, in_site=CUBE_IN_SITE):
     return pos, R
 
 
-def plan_pick_place(model, cube_pos, place_xy, yaw=0.0, q_init=(0, -1.7, 1.6, 1.0, 0)):
+def plan_pick_place(model, cube_pos, place_xy, yaw=0.0, q_init=(0, -1.7, 1.6, 1.0, 0), site_offset=(0.0, 0.0, 0.0)):
     """掴む → 置く の途中の姿勢(関節角 5 つ)を、IK で全部求めて辞書で返す。解けなかった姿勢の名前は、例外で知らせる。
+
+    site_offset: 実機の指の面の位置が sim と違うぶん [m]。手の座標(gripperframe の x, y, z)で、CUBE_IN_SITE と CUBE_IN_HAND の両方に足す
+      (指に対する立方体の位置を、そのぶんずらす)。実機で掴んだ立方体の位置から求めた値(grasp_calibration.py)を渡す。既定は 0(sim どおり)。
 
     返す姿勢: above(立方体の真上)、grasp(掴む)、place_above(置き場の真上)、place(置く)。
     前の姿勢の解を、次の IK の出発点にする(近い姿勢から探すと、関節が急に大きく動く別の解に飛びにくい)。
     解く順は grasp → above → place → place_above(理由は下のコメント)。
     """
     cube_pos = np.asarray(cube_pos, dtype=float)
+    site_offset = np.asarray(site_offset, dtype=float)
     place_pos = np.array([place_xy[0], place_xy[1], cube_pos[2] + 0.003])  # 置くときは 3 mm 浮かせて、そっと放す
     scratch = mujoco.MjData(model)  # 計算専用の data(動かしている本体の data を汚さないため)
     q = np.array(q_init, dtype=float)
@@ -196,14 +200,15 @@ def plan_pick_place(model, cube_pos, place_xy, yaw=0.0, q_init=(0, -1.7, 1.6, 1.
     # 先に「低い姿勢(掴む・置く)」を解き、その解を出発点にして「真上の姿勢」を解く。
     # 真上の姿勢は、折りたたんだ姿勢から遠く、そこから直接だと解けないことがある。低い姿勢のほうが、手が向きを作りやすい。
     # 掴む前(grasp、above)は立方体が CUBE_IN_SITE にあり、掴んだあと(place、place_above)は CUBE_IN_HAND にある。
-    solve("grasp", cube_pos, CUBE_IN_SITE)
-    solve("above", cube_pos + [0, 0, HOVER], CUBE_IN_SITE)
-    solve("place", place_pos, CUBE_IN_HAND)
-    solve("place_above", place_pos + [0, 0, HOVER], CUBE_IN_HAND)
+    in_site, in_hand = CUBE_IN_SITE + site_offset, CUBE_IN_HAND + site_offset
+    solve("grasp", cube_pos, in_site)
+    solve("above", cube_pos + [0, 0, HOVER], in_site)
+    solve("place", place_pos, in_hand)
+    solve("place_above", place_pos + [0, 0, HOVER], in_hand)
     return poses
 
 
-def plan_for_cube(model, cube_pos, place_xy, cube_yaw=0.0):
+def plan_for_cube(model, cube_pos, place_xy, cube_yaw=0.0, site_offset=(0.0, 0.0, 0.0)):
     """立方体が机の上で cube_yaw [rad] だけ回っているとき、指を立方体の面に合わせた掴み方を探して、(姿勢の辞書, 指の向き yaw) を返す。
 
     指の開閉の向きは、立方体の面に垂直でないと、角(かど)に当たって立方体が回ってしまう。
@@ -215,7 +220,7 @@ def plan_for_cube(model, cube_pos, place_xy, cube_yaw=0.0):
     candidates.sort(key=lambda a: abs(np.arctan2(np.sin(a), np.cos(a))))
     for yaw in candidates:
         try:
-            return plan_pick_place(model, cube_pos, place_xy, yaw), yaw
+            return plan_pick_place(model, cube_pos, place_xy, yaw, site_offset=site_offset), yaw
         except ValueError:  # IK が解けなかった。次の候補へ
             continue
     raise ValueError(f"どの向きでも IK が解けない(立方体 {np.round(cube_pos, 3)} m、向き {np.degrees(cube_yaw):.0f}°)")

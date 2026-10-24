@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "src"))  # src フォルダを import の探索先
 
 import mujoco  # noqa: E402
 import numpy as np  # noqa: E402
+from hand_sim.grasp_calibration import load_site_offset  # noqa: E402
 from hand_sim.sim_real import real_to_sim, sim_to_real  # noqa: E402
 from hand_sim.so101_grasp import GRIP_CLOSE, GRIP_OPEN, plan_for_cube  # noqa: E402
 
@@ -51,7 +52,11 @@ if r_cube > 0.23:
 err = np.array(args.hand_error) * 1e-3  # 手先 − 目標 のずれ [m]。目標からこの分を引けば、手先が本来の位置に来る(ずれが同じ向き・大きさで出る前提)
 if err.any():
     print(f"手先のずれの補正: 目標を ({-err[0] * 1000:+.1f}, {-err[1] * 1000:+.1f}) mm ずらして計画する")
-poses, hand_yaw = plan_for_cube(model, np.array([cube["x_m"] - err[0], cube["y_m"] - err[1], CUBE_M / 2]), np.array(PADS[args.color]) - err, np.radians(cube["yaw_deg"]))
+site_offset = load_site_offset()  # 実機で掴んだときの測定から貯めた、指の面のずれ(手の座標 [m])。まだ測定が無ければ 0(update_grasp_offset.py が貯める)
+if site_offset.any():
+    print(f"掴みの校正(実機で掴んだ測定の中央値): 手の座標 z を {site_offset[2] * 1000:+.1f} mm ずらして計画する")
+poses, hand_yaw = plan_for_cube(model, np.array([cube["x_m"] - err[0], cube["y_m"] - err[1], CUBE_M / 2]), np.array(PADS[args.color]) - err, np.radians(cube["yaw_deg"]),
+                                site_offset=site_offset)
 g_lo, g_hi = model.joint("gripper").range
 
 
