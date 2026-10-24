@@ -1,0 +1,75 @@
+"""【概要】実機の肩のモーター(shoulder_pan)だけを、プログラムで少しずつ回し、各位置で「関節角の読み取り + カメラの撮影 + 手先の記録」を自動で行う。
+fit_pan_sweep.py(肩の軸の位置を、測定に頼らず求める)に必要な、pan を変えた複数の姿勢の記録を、手で角度を測らずに作るためのもの。
+動かすのは pan だけ(他の関節は、開始時の姿勢のまま、トルクで保つ)。開始時の pan から、右へ delta 度ずつ(既定 0, 15, 30, 45, 60)回す。pan の + は右(実機)。
+安全:
+  (1) 動かす前に、可動域の端(MARGIN 以内)に近い目標があれば、何も動かさず止まる。
+  (2) 動かす前に、計画を表示して、Enter を押すまで待つ。腕を支え、周りの物(机の板、カメラ、ケーブル)に当たらないか確かめてから押す。
+  (3) 終了時は、開始の姿勢に戻ってから、「腕を支えて Enter」を待ち、そのあとトルクを切る(切ると腕は落ちる)。途中で Ctrl+C を押しても、同じ手順で終わる。
+撮影と記録は、この .venv の record_hand_sample.py を別プロセスで呼ぶ(カメラの処理は、こちらの環境にあるため)。
+
+使い方(LeRobot の環境で実行。先に、手で、腕を前へ伸ばした姿勢にしておく。pan は、ほぼ正面):
+    cd ~/ドキュメント/robot-hand-portfolio
+    ~/lerobot-work/lerobot/.venv/bin/python scripts/real_pan_sweep.py
+    ~/lerobot-work/lerobot/.venv/bin/python scripts/real_pan_sweep.py --deltas 0 20 40 60 --seconds 4
+"""
+import argparse
+import json
+import subprocess
+import time
+from pathlib import Path
+
+# 同じフォルダの real_move_joints.py から、可動域を求める関数と、滑らかに動かす関数を借りる(詳しい意味は real_send_pose.py を参照)。
+from real_move_joints import JOINTS, MARGIN, SOFollowerRobotConfig, SO101Follower, joint_limits, move_to
+
+ROOT = Path(__file__).resolve().parents[1]  # このファイルの 1 つ上のフォルダ = プロジェクトの根
+JOINTS_FILE = ROOT / "outputs" / "real_joints.json"
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--deltas", type=float, nargs="+", default=[0, 15, 30, 45, 60], help="開始時の pan からの、右への回転量(度)。先頭は 0 にする")
+parser.add_argument("--seconds", type=float, default=3.0, help="1 つの位置へ動かす秒数")
+parser.add_argument("--settle", type=float, default=1.0, help="動いたあと、止まるのを待つ秒数")
+parser.add_argument("--venv-python", default=str(ROOT / ".venv" / "bin" / "python"), help="撮影・記録に使う、このプロジェクトの環境の python")
+args = parser.parse_args()
+
+
+def joints_of(obs):
+    """get_observation の結果から、関節の値だけを {名前: 値} にして返す(カメラ等は除く)。"""
+    return {name: float(obs[f"{name}.pos"]) for name in JOINTS}
+
+
+robot = SO101Follower(SOFollowerRobotConfig(port="/dev/ttyACM0", id="my_follower_arm"))
+robot.connect()  # 接続するとトルクが入り、今の姿勢を保つ。接続中は、腕を手で支える
+try:
+    start = {k: v for k, v in robot.get_observation().items() if k.endswith(".pos")}
+    pan0 = start["shoulder_pan.pos"]
+    lo, hi = joint_limits(robot, "shoulder_pan")
+    bad = [d for d in args.deltas if not (lo + MARGIN <= pan0 + d <= hi - MARGIN)]
+    if bad:
+        print(f"動かさずに終了します。pan の目標 {[round(pan0 + d, 1) for d in bad]} は、可動域 [{lo:.1f}, {hi:.1f}] の端に近い。開始の pan({pan0:.1f})を変えるか、--deltas を減らす")
+        raise SystemExit(1)
+    print("開始姿勢:", {k: round(v, 1) for k, v in start.items()})
+    print("計画(pan だけを動かす。他の関節は保つ): " + ", ".join(f"{pan0 + d:.1f}°" for d in args.deltas))
+    input("腕を支え、動く範囲に物が無いことを確認したら Enter(やめるなら Ctrl+C): ")
+
+    current = dict(start)
+    for d in args.deltas:
+        goal = dict(start)  # dict(...): 辞書のコピー。他の関節は開始時のまま
+        goal["shoulder_pan.pos"] = pan0 + d
+        move_to(robot, current, goal, args.seconds)
+        current = goal
+        time.sleep(args.settle)  # 止まるのを待つ
+        obs = robot.get_observation()
+        JOINTS_FILE.write_text(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "joints": joints_of(obs)}, ensure_ascii=False, indent=2))
+        label = f"sweep_{d:+.0f}"
+        print(f"\n--- pan {obs['shoulder_pan.pos']:.1f}°(指令 {goal['shoulder_pan.pos']:.1f}°)で撮影・記録: {label}")
+        r = subprocess.run([args.venv_python, str(ROOT / "scripts" / "record_hand_sample.py"), "--label", label, "--joints-file-only"],
+                           capture_output=True, text=True)  # 別プロセスで、撮影と記録を行う。capture_output: 出力を受け取る
+        print(r.stdout.strip() or r.stderr.strip())  # 成功なら標準出力、失敗なら標準エラーを表示。失敗しても、次の位置へ進む
+finally:
+    # 終了: 開始の姿勢に戻り、腕を支えてもらってから、トルクを切る(切ると腕は落ちる)。
+    try:
+        move_to(robot, current, start, args.seconds)
+    except NameError:
+        pass  # 動き出す前に終わった(current がまだ無い)ときは、戻す必要がない
+    input("\n腕を支えたら Enter(このあとトルクが切れて、腕は落ちる): ")
+    robot.disconnect()

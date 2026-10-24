@@ -30,6 +30,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--label", required=True, help="この姿勢の名前(例: pan0、pan15)")
 parser.add_argument("--exposure", type=int, default=100, help="露出時間(0.1 ミリ秒単位)")
 parser.add_argument("--lerobot-python", default=str(Path.home() / "lerobot-work/lerobot/.venv/bin/python"), help="LeRobot の環境の python")
+parser.add_argument("--joints-file-only", action="store_true",
+                    help="関節角は読まず、outputs/real_joints.json の値をそのまま使う(real_pan_sweep.py が、腕を動かしたあとに呼ぶ。2 つのプロセスが、同時に実機の通信路を開かないため)")
 args = parser.parse_args()
 
 JOINTS_FILE = ROOT / "outputs" / "real_joints.json"
@@ -37,7 +39,9 @@ SAMPLES_FILE = ROOT / "outputs" / "hand_samples.json"
 
 
 def read_joints():
-    """real_read_joints.py を実行して、関節角 {名前: 値} を返す(別プロセス = LeRobot の環境)。"""
+    """real_read_joints.py を実行して、関節角 {名前: 値} を返す(別プロセス = LeRobot の環境)。--joints-file-only のときは、保存済みのファイルを読むだけ。"""
+    if args.joints_file_only:
+        return json.loads(JOINTS_FILE.read_text())["joints"]
     subprocess.run([args.lerobot_python, str(ROOT / "scripts" / "real_read_joints.py")], check=True, capture_output=True)  # check=True: 失敗したら例外にする
     return json.loads(JOINTS_FILE.read_text())["joints"]
 
