@@ -24,7 +24,7 @@ from hand_sim.aruco_marker import detect_markers, marker_pose_in_world  # noqa: 
 from hand_sim.fixed_board import SIDE_MM, camera_pose_from_board  # noqa: E402
 from hand_sim.hand_marker import hand_pose_from_marker  # noqa: E402
 from hand_sim.real_camera import load_camera  # noqa: E402
-from hand_sim.webcam import grab_frame, list_cameras, set_manual_exposure  # noqa: E402
+from hand_sim.webcam import grab_until, list_cameras  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--label", required=True, help="この姿勢の名前(例: pan0、pan15)")
@@ -53,8 +53,12 @@ def capture():
         device = next((devs[0] for name, devs in list_cameras() if "WebCamera" in name), None)
         if device:
             try:
-                set_manual_exposure(device, args.exposure)
-                return grab_frame(device, settle_frames=15, timeout=8)
+                # 露出を短い方から試して、手の板(ID 0)と、板のマーカー 4 個以上が読める明るさを探す(部屋の明るさが、時間帯で変わるため)
+                def good(im):
+                    ids = detect_markers(im, load_camera()["K"], load_camera()["dist"], SIDE_MM / 1000)
+                    return 0 in ids and len([i for i in ids if 1 <= i <= 6]) >= 4
+                img, _used = grab_until(device, good, exposures=(args.exposure, 200, 400, 800, 1600), settle_frames=15, timeout=8)
+                return img
             except Exception:  # 切断・タイムアウトなど。何が起きても、時間内ならやり直す(「何でも握りつぶす」書き方は普通は避けるが、ここは不安定な機器の再試行のため)
                 pass
         time.sleep(1)

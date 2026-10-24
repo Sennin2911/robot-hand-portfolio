@@ -43,3 +43,16 @@ def set_manual_exposure(device="/dev/video2", exposure=300, white_balance=4500, 
     if gain is not None:
         controls.append(f"gain={gain}")
     subprocess.run(["v4l2-ctl", "-d", device, "-c", ",".join(controls)], check=True)
+
+
+def grab_until(device, is_good, exposures=(100, 200, 400, 800, 1600), **grab_kwargs):
+    """露出を、短い方から順に試して、is_good(画像) が True になる最初の画像を返す。(画像, そのときの露出) を返す。どれもだめなら (最後の画像, None)。
+    なぜ要るか: 部屋の明るさは、時間帯で変わる(昼は露出 100 でよく、夕方は暗くて読めない)。マーカーが読める明るさを、毎回、自動で探す。
+    is_good: 画像(RGB)を受け取り、「使える画像か」を True / False で返す関数(例: 「マーカーが 5 個以上読める」)。[頻度] 関数を引数に渡す書き方は、Python で定番"""
+    img = None
+    for exposure in exposures:
+        set_manual_exposure(device, exposure)
+        img = grab_frame(device, **grab_kwargs)
+        if is_good(img):
+            return img, exposure
+    return img, None

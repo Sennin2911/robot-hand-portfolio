@@ -11,6 +11,7 @@ fit_pan_sweep.py(肩の軸の位置を、測定に頼らず求める)に必要�
     cd ~/ドキュメント/robot-hand-portfolio
     ~/lerobot-work/lerobot/.venv/bin/python scripts/real_pan_sweep.py
     ~/lerobot-work/lerobot/.venv/bin/python scripts/real_pan_sweep.py --deltas 0 20 40 60 --seconds 4
+    ~/lerobot-work/lerobot/.venv/bin/python scripts/real_pan_sweep.py --tag B --deltas 0 30 60   # 腕の形を変えて、別の名前(B)で記録する
 """
 import argparse
 import json
@@ -26,6 +27,7 @@ JOINTS_FILE = ROOT / "outputs" / "real_joints.json"
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--deltas", type=float, nargs="+", default=[0, 15, 30, 45, 60], help="開始時の pan からの、右への回転量(度)。先頭は 0 にする")
+parser.add_argument("--tag", default="sweep", help="この腕の形の名前(例: B、down)。サンプルの名前は「<tag>_+0」のようになる。形ごとに変えること(同じ名前は上書きされる)")
 parser.add_argument("--seconds", type=float, default=3.0, help="1 つの位置へ動かす秒数")
 parser.add_argument("--settle", type=float, default=1.0, help="動いたあと、止まるのを待つ秒数")
 parser.add_argument("--venv-python", default=str(ROOT / ".venv" / "bin" / "python"), help="撮影・記録に使う、このプロジェクトの環境の python")
@@ -70,7 +72,7 @@ try:
         time.sleep(args.settle)  # 止まるのを待つ
         obs = robot.get_observation()
         JOINTS_FILE.write_text(json.dumps({"time": time.strftime("%Y-%m-%d %H:%M:%S"), "joints": joints_of(obs)}, ensure_ascii=False, indent=2))
-        label = f"sweep_{d:+.0f}"
+        label = f"{args.tag}_{d:+.0f}"
         print(f"\n--- pan {obs['shoulder_pan.pos']:.1f}°(指令 {goal['shoulder_pan.pos']:.1f}°)で撮影・記録: {label}")
         r = subprocess.run([args.venv_python, str(ROOT / "scripts" / "record_hand_sample.py"), "--label", label, "--joints-file-only"],
                            capture_output=True, text=True)  # 別プロセスで、撮影と記録を行う。capture_output: 出力を受け取る
