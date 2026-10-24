@@ -84,4 +84,11 @@ for k, name in enumerate(NAMES):
     flag = "  ← 分けられていない(腕の形を増やす)" if std[k] > (5.0 if k < 3 else 2.0) else ""
     unit_fix = res.x[k]
     print(f"{name:22s}{unit_fix:+10.2f}{std[k]:9.2f}   {extra}{flag}")
+# サンプルごとの残差(補正前 → 補正後)。位置 [mm]、向き [度]。どのサンプルが、合っていないかを見る
+print("\nサンプルごとの差(画像 − sim。補正前 → 補正後)")
+print(f"{'名前':10s}{'位置[mm]':>18s}{'向き[度]':>16s}")
+for i, smp in enumerate(samples):
+    b = (r0[6 * i:6 * i + 6] * np.r_[[args.sigma_pos] * 3, [args.sigma_rot] * 3])
+    a = (res.fun[6 * i:6 * i + 6] * np.r_[[args.sigma_pos] * 3, [args.sigma_rot] * 3])
+    print(f"{smp['label']:10s}{np.linalg.norm(b[:3]):8.1f} →{np.linalg.norm(a[:3]):6.1f}{np.linalg.norm(b[3:]):9.1f} →{np.linalg.norm(a[3:]):6.1f}")
 print(f"\n(ヤコビ行列の特異値の最小/最大 = {sv.min() / sv.max():.1e}。小さいほど、分けられない組み合わせがある)")
