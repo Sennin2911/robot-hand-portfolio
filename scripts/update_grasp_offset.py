@@ -35,7 +35,7 @@ def log_row(**extra):
     csv.writer: 表(CSV ファイル)に行を書く標準の部品。open(..., "a"): 末尾に追記するモード。[頻度] 記録を貯めるときの定番"""
     log = ROOT / "calibration" / "grasp_log.csv"
     row = {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "tag": plan["tag"], "plan_x_mm": round(plan["cube"]["x_m"] * 1000, 1), "plan_y_mm": round(plan["cube"]["y_m"] * 1000, 1),
-           "reach_mm": round(float(np.hypot(plan["cube"]["x_m"] + 0.0388, plan["cube"]["y_m"])) * 1000, 1),  # 肩の軸からの水平距離(原点は肩の軸の 38.8 mm 後ろ)
+           "reach_mm": round(float(np.hypot(plan["cube"]["x_m"] - 0.0388, plan["cube"]["y_m"])) * 1000, 1),  # 肩の軸からの水平距離(肩の軸は、原点の 38.8 mm 前)
            "hand_yaw_deg": round(plan["hand_yaw_deg"], 1), "board_markers": s["board_markers"], "board_reproj_px": round(s["board_reproj_px"], 2),
            "cube_found": s.get("cube_pos_m") is not None, "cube_area_px": s["cube_area_px"], "dx": "", "dy": "", "dz": "", "used": False, "note": ""}
     row.update(extra)

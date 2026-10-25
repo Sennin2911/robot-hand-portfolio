@@ -16,7 +16,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 from hand_sim.aruco_marker import detect_markers  # noqa: E402
 from hand_sim.fixed_board import SIDE_MM, board_marker_corners_world, camera_pose_from_board  # noqa: E402
-from hand_sim.cube_world import marker_mask, white_balance_by_paper, workspace_mask  # noqa: E402
+from hand_sim.cube_world import search_hull, search_roi, white_balance_by_paper  # noqa: E402
 from hand_sim.real_camera import load_camera, pixel_to_world_plane_K, project_points_K, undistort_image  # noqa: E402
 from hand_sim.vision import find_cube_pose_hsv, square_yaw_from_points  # noqa: E402
 from hand_sim.webcam import grab_frame, list_cameras, set_manual_exposure  # noqa: E402
@@ -48,16 +48,10 @@ if len(board) < 4:
 cam_pos, cam_R, reproj, n = camera_pose_from_board(board, cam["K"], np.zeros(5), SIDE_MM)
 print(f"板のマーカー {n} 個、再投影誤差 {reproj:.2f} 画素")
 
-# 探す範囲: 板の 6 個のマーカーの角が、画像のどこに写るはずかを計算して使う(立方体がマーカーを隠していても、範囲が変わらない)
-pts = project_points_K(np.vstack(list(board_marker_corners_world().values())), cam_pos, cam_R, cam["K"]).astype(np.float32)
-hull = cv2.convexHull(pts).reshape(-1, 2)
-hull = hull.mean(axis=0) + (hull - hull.mean(axis=0)) * 2.2  # 探す範囲(view_real_detection.py と同じ)
-hull[hull[:, 1] > hull[:, 1].mean(), 1] += args.extend_down  # 画像の下側の頂点(v が平均より大きい点)だけを、下へ動かす
-hull[:, 1] = np.clip(hull[:, 1], 0, fixed.shape[0] - 1)  # 画像の外へはみ出さないようにする
-roi = np.zeros(fixed.shape[:2], np.uint8)
-cv2.fillConvexPoly(roi, hull.astype(np.int32), 1)
-roi = roi.astype(bool) & ~marker_mask(fixed.shape, cam_pos, cam_R, cam["K"]) & workspace_mask(fixed.shape, cam_pos, cam_R, cam["K"])
-# 上: 板のマーカーの部分は探さない(黒に青みが残ると「青」と誤検出するため)。ロボットの土台など、立方体を置けない範囲も探さない(詳しくは marker_mask、workspace_mask)
+# 探す範囲: 板の 6 個のマーカーと、3 つの置き場を含む枠(立方体がマーカーを隠していても、範囲が変わらない。詳しくは cube_world.search_hull)
+hull = search_hull(fixed.shape, cam_pos, cam_R, cam["K"], extend_down=args.extend_down)
+roi = search_roi(fixed.shape, cam_pos, cam_R, cam["K"], extend_down=args.extend_down)
+# 上: 板のマーカーの黒い四角は探さない(余裕 4 画素。黒に青みが残ると「青」と誤検出したため)。ロボットの土台など、立方体を置けない範囲も探さない(詳しくは marker_mask、workspace_mask)
 
 # 色の判定用に、板の白い紙が白になるよう色を補正した画像を使う(照明やカメラの設定で色が偏っても、立方体の色相が判定の範囲に入るように)。表示は、元の画像のまま
 balanced, gains = white_balance_by_paper(fixed, cam_pos, cam_R, cam["K"])
