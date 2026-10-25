@@ -25,7 +25,7 @@ from hand_sim.fixed_board import SIDE_MM, camera_pose_from_board  # noqa: E402
 from hand_sim.hand_marker import hand_pose_from_marker  # noqa: E402
 from hand_sim.cube_world import locate_cube  # noqa: E402
 from hand_sim.real_camera import load_camera, undistort_image  # noqa: E402
-from hand_sim.webcam import grab_until, list_cameras  # noqa: E402
+from hand_sim.webcam import grab_until, list_cameras, set_manual_exposure  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--label", required=True, help="この姿勢の名前(例: pan0、pan15)")
@@ -60,7 +60,14 @@ def capture():
                 def good(im):
                     ids = detect_markers(im, load_camera()["K"], load_camera()["dist"], SIDE_MM / 1000)
                     return 0 in ids and len([i for i in ids if 1 <= i <= 6]) >= 4
-                img, _used = grab_until(device, good, exposures=(args.exposure, 200, 400, 800, 1600), settle_frames=15, timeout=8)
+                if args.detect_cube:
+                    # 色で立方体も探すときは、detect_cubes_world.py と同じ明るさ(露出 300、ゲイン 32)で撮る。短い露出(100 など)だと暗くて、緑が見つからない。
+                    # 先に固定してから、その露出でマーカーが読めるか見る(読めなければ、下の grab_until が露出を変えて試す)。
+                    set_manual_exposure(device, exposure=300, white_balance=4500, gain=32)
+                    exposures = (300, 200, 400, 800, 1600)
+                else:
+                    exposures = (args.exposure, 200, 400, 800, 1600)
+                img, _used = grab_until(device, good, exposures=exposures, settle_frames=15, timeout=8)
                 return img
             except Exception:  # 切断・タイムアウトなど。何が起きても、時間内ならやり直す(「何でも握りつぶす」書き方は普通は避けるが、ここは不安定な機器の再試行のため)
                 pass
@@ -92,6 +99,10 @@ cube_pos_m, cube_area = None, 0
 if args.detect_cube:
     # 歪みを直した画像で、色で立方体を探す(板のマーカーの検出は歪み補正なしで dist を渡す方式なので、ここだけ別に補正する)
     xy, cube_area = locate_cube(undistort_image(img, cam["K"], cam["dist"]), args.detect_cube, cam_pos, cam_R, cam["K"])
+    if xy is None:  # 原因(手や指が立方体を隠している、暗い、など)を目で確かめられるように、画像を残す
+        cube_png = ROOT / "outputs" / f"record_nocube_{args.label}.png"
+        cv2.imwrite(str(cube_png), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))
+        print(f"  立方体が見つからなかった時の画像: {cube_png}")
     if xy is not None:
         cube_pos_m = [float(xy[0]), float(xy[1]), 0.015]  # 高さは、中心(半辺)の 15 mm と仮定した値
 
