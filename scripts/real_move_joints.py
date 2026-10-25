@@ -36,8 +36,8 @@ def joint_limits(robot, name):
     return -half, half
 
 
-def move_to(robot, start, goal, seconds):
-    """全関節の指令を、start から goal まで seconds 秒かけて、直線的に変える。
+def move_to(robot, start, goal, seconds, smooth=True):
+    """全関節の指令を、start から goal まで seconds 秒かけて、滑らかに変える(smooth=False なら、一定の速さの直線)。
 
     start, goal : {"関節名.pos": 値} の辞書。キーの形 "shoulder_pan.pos" は LeRobot の決まり。
     動かさない関節は、start と goal を同じ値にしておけば、その位置を保つ。
@@ -45,6 +45,10 @@ def move_to(robot, start, goal, seconds):
     steps = max(1, int(seconds * RATE_HZ))
     for i in range(1, steps + 1):
         t = i / steps  # 0 → 1 に進む割合
+        if smooth:
+            # 最小ジャーク曲線(5 次の補間): 動き出しと止まりの速度・加速度が 0 になる(カクッと動き出したり、止まったりしない)。
+            # 真ん中の速さは、直線補間の約 1.9 倍になる(同じ秒数で、同じ距離を動くため)。[頻度] ロボットの軌道の滑らかさでは定番だが、初心者向けの教材ではあまり見ない
+            t = 10 * t**3 - 15 * t**4 + 6 * t**5
         # 辞書内包表記: 各キーについて、start から goal へ割合 t だけ進んだ値を作る。[頻度] Python で非常によく使う
         action = {k: start[k] + (goal[k] - start[k]) * t for k in start}
         robot.send_action(action)  # サーボに「この角度へ」という目標を送る (動かすのはサーボ内部の制御)

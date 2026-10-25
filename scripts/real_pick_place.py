@@ -41,7 +41,7 @@ parser.add_argument("--grasp-margin", type=float, default=0.8,
                     help="--auto の安全装置。指を閉じたあとの指の読みが「閉じる指令 + この値」未満なら、何も掴めていない(指が閉じ切った)とみなして中止する。"
                          "立方体を掴んだ実測は、閉じる指令より 1.6 ほど大きい(5.5 など)")
 parser.add_argument("--speed", type=float, default=1.0, help="動かす速さの倍率(2 なら、計画の秒数の半分で動かす)。降下(2、6)は、安全のため 1.5 倍までに抑える")
-parser.add_argument("--settle", type=float, default=1.5, help="動いたあと、止まるのを待つ秒数")
+parser.add_argument("--settle", type=float, default=1.0, help="動いたあと、止まるのを待つ秒数")
 args = parser.parse_args()
 
 plan_file = ROOT / "outputs" / f"pick_plan_{args.color}.json"
@@ -93,7 +93,7 @@ try:
         speed = min(args.speed, 1.5) if st["name"][0] in "26" else args.speed
         move_to(robot, current, goal, max(0.8, st["seconds"] / speed))  # 速くしすぎないよう、1 回の動きは 0.8 秒以上かける
         current = goal
-        time.sleep(args.settle)
+        time.sleep(args.settle if st["name"][0] in "1256" else min(args.settle, 0.3))  # 読みで補正する段階(腕が止まって、読みが落ち着くのを待つ)だけ長く待つ。それ以外は短く
         if st["name"][0] in "1256":  # 腕が動く段階だけ、関節の読みで補正(指だけ動かす 3、7 と、持ち上げ・上がる 4、8 は、しない)
             for it in range(args.refine):
                 now = robot.get_observation()
@@ -150,7 +150,7 @@ finally:
                         opened = {**current, "gripper.pos": plan["gripper_open"]}
                         move_to(robot, current, opened, 1.5)
                         current = opened
-                move_to(robot, current, {**plan["home"], "gripper.pos": current["gripper.pos"]}, plan.get("return_seconds", 8.0))
+                move_to(robot, current, {**plan["home"], "gripper.pos": current["gripper.pos"]}, max(3.0, plan.get("return_seconds", 8.0) / args.speed))  # 戻りも --speed に従う(ただし 3 秒以上)
         except NameError:  # current が未定義(接続直後の失敗)のとき
             pass
         (ROOT / "outputs" / "real_trial_result.json").write_text(json.dumps(  # 試験の判定(judge_real_trial.py)が読む
