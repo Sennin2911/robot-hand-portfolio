@@ -22,7 +22,7 @@ import numpy as np  # noqa: E402
 from hand_sim.cube_world import PADS  # noqa: E402  置き場の中心(judge_real_trial.py と共有)
 from hand_sim.grasp_calibration import load_site_offset  # noqa: E402
 from hand_sim.sim_real import real_to_sim, sim_to_real  # noqa: E402
-from hand_sim.so101_grasp import GRIP_CLOSE, GRIP_OPEN, plan_for_cube  # noqa: E402
+from hand_sim.so101_grasp import GRIP_CLOSE, GRIP_OPEN, NeighborCollision, plan_for_cube  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--color", required=True, choices=["red", "green", "blue"])
@@ -58,8 +58,20 @@ if err.any():
 site_offset = load_site_offset()  # 実機で掴んだときの測定から貯めた、指の面のずれ(手の座標 [m])。まだ測定が無ければ 0(update_grasp_offset.py が貯める)
 if site_offset.any():
     print(f"掴みの校正(実機で掴んだ測定の中央値): 手の座標 z を {site_offset[2] * 1000:+.1f} mm ずらして計画する")
-poses, hand_yaw = plan_for_cube(model, np.array([cube["x_m"] - err[0], cube["y_m"] - err[1], CUBE_M / 2]), np.array(PADS[args.color]) - err, np.radians(cube["yaw_deg"]),
-                                site_offset=site_offset)
+# 隣にある、ほかの色の立方体。開いた指がぶつかる向きを避けて、掴む向きを選ぶ(90° ごとに 4 通りのうち、ぶつからない向き。grasp_clearance.py)
+neighbors = [(d["x_m"], d["y_m"], np.radians(d["yaw_deg"])) for c, d in det.items() if c != args.color]
+info = {}
+try:
+    poses, hand_yaw = plan_for_cube(model, np.array([cube["x_m"] - err[0], cube["y_m"] - err[1], CUBE_M / 2]), np.array(PADS[args.color]) - err, np.radians(cube["yaw_deg"]),
+                                    site_offset=site_offset, neighbors=neighbors, info=info)
+except NeighborCollision as e:
+    # 終了コード 3 = 隣の立方体が近すぎて、どの向きでも掴めない(run_real_trial.sh が、失敗の分類「隣接」にする)。1 は、その他の失敗
+    print(f"掴めない: {e}。隣の立方体を、離して置き直す")
+    sys.exit(3)
+if info.get("skipped"):
+    print(f"隣の立方体を避けて、手の向きを選び直した({info['skipped']} 通りを飛ばした。隣との距離 {info['clearance_mm']:.1f} mm)")
+elif neighbors:
+    print(f"隣の立方体との距離は、最も近くて {info['clearance_mm']:.1f} mm(開いた手の輪郭から。余裕 5 mm 以上で、向きの選び直しは不要)")
 g_lo, g_hi = model.joint("gripper").range
 
 
@@ -80,7 +92,8 @@ stages = [
     ("7 指を開く", "place", GRIP_OPEN),
     ("8 上がる", "place_above", GRIP_OPEN),
 ]
-plan = {"tag": f"PICK_{args.color}", "assumed_start": REST, "home": REST, "color": args.color, "cube": cube, "hand_yaw_deg": float(np.degrees(hand_yaw)),
+plan = {"neighbors": [[round(x, 4), round(y, 4)] for x, y, _ in neighbors], "avoided_neighbor": bool(info.get("skipped")), "neighbor_clearance_mm": info.get("clearance_mm"),
+        "tag": f"PICK_{args.color}", "assumed_start": REST, "home": REST, "color": args.color, "cube": cube, "hand_yaw_deg": float(np.degrees(hand_yaw)),
         "gripper_open": G_OPEN, "gripper_close": G_CLOSE, "stages": []}
 for name, pose, grip in stages:
     cmd = real_cmd(poses[pose], grip)

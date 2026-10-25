@@ -3,7 +3,7 @@
 実機の動きの結果(outputs/real_trial_result.json。real_pick_place.py --auto が書く)、計画(outputs/pick_plan_<色>.json)。
 成功 = 立方体が、その色の置き場の中心から --tol-mm 以内にあり、ほかの立方体が --others-fail-mm(10 mm)以上動いていない。
 ほかの立方体の動きは、成功率とは別に「接触」として記録する(contact 列。--touch-mm(5 mm)以上 = 軽い接触、--others-fail-mm 以上 = 明らかに動かした)。
-失敗の分類: 検出失敗 / 届かない / 安全停止 / 把持失敗 / 運搬中の落下 / 置き損じ / 他を動かした / 最終位置不明(詳しくは classify)。
+失敗の分類: 検出失敗 / 届かない / 隣接 / 安全停止 / 把持失敗 / 運搬中の落下 / 置き損じ / 他を動かした / 最終位置不明(詳しくは classify)。
 列は sim の試験(outputs/sorting_*.csv)に合わせてあるので、sim と実機の失敗の内訳を同じ集計で比べられる。
 使い方: .venv/bin/python scripts/judge_real_trial.py --color green
         .venv/bin/python scripts/judge_real_trial.py --color green --stage-failed detect   (動かす前の段階で失敗したとき。run_real_trial.sh が使う)
@@ -23,8 +23,8 @@ from hand_sim.cube_world import PADS  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--color", required=True, choices=["red", "green", "blue"])
-parser.add_argument("--stage-failed", choices=["detect", "plan"],
-                    help="動かす前に失敗したとき。detect = 板が見えない・立方体が見つからない → 検出失敗。plan = 計画が作れない → 届かない(検出済みの色が無ければ検出失敗)")
+parser.add_argument("--stage-failed", choices=["detect", "plan", "neighbor"],
+                    help="動かす前に失敗したとき。detect = 板が見えない・立方体が見つからない → 検出失敗。plan = 計画が作れない → 届かない(検出済みの色が無ければ検出失敗)。neighbor = 隣の立方体が近すぎて、どの向きでも掴めない → 隣接")
 parser.add_argument("--tol-mm", type=float, default=15.0, help="置き場の中心から、この距離(mm)以内に立方体の中心があれば、置けたとみなす")
 parser.add_argument("--touch-mm", type=float, default=5.0, help="ほかの立方体が、これ(mm)以上動いたら「軽い接触」(失敗にはしない。測定の誤差が 1〜2 mm あるので、これより小さい動きは見分けない)")
 parser.add_argument("--others-fail-mm", type=float, default=10.0, help="ほかの立方体が、これ(mm)以上動いたら「明らかに動かした」(失敗の分類「他を動かした」)")
@@ -33,7 +33,7 @@ args = parser.parse_args()
 
 OUT = ROOT / "outputs"
 LOG = OUT / "real_trials.csv"
-FIELDS = ["trial", "time", "color", "success", "fail_class", "true_x", "true_y", "true_yaw_deg", "final_x", "final_y", "final_err_mm", "moved_others_mm", "contact",
+FIELDS = ["trial", "time", "color", "success", "fail_class", "true_x", "true_y", "true_yaw_deg", "final_x", "final_y", "final_err_mm", "moved_others_mm", "contact", "avoid",
           "cycle_s", "grip_after_close", "max_joint_err_deg", "board_markers", "board_reproj_px", "detail", "note"]  # true_* は「掴む前に検出した位置 [m]」(sim の列名に合わせた)
 
 
@@ -58,6 +58,7 @@ def classify(color):
     plan = read_json(f"pick_plan_{color}.json")
     extra = {"board_markers": "", "board_reproj_px": "", "true_x": "", "true_y": "", "true_yaw_deg": "", "final_x": "", "final_y": "", "final_err_mm": "",
              "moved_others_mm": "", "contact": "", "cycle_s": "", "grip_after_close": "", "max_joint_err_deg": ""}
+    extra["avoid"] = "隣を避けて向きを選んだ" if plan and plan.get("avoided_neighbor") else ""
     if before is not None:
         extra["board_markers"], extra["board_reproj_px"] = before.get("board_markers", ""), round(before.get("board_reproj_px", 0), 2)
         c = before["cubes"].get(color)
@@ -103,7 +104,10 @@ def classify(color):
 
 if args.stage_failed:
     before = read_json("trial_before.json")
-    if args.stage_failed == "detect" or xy(before, args.color) is None:
+    if args.stage_failed == "neighbor":
+        ok, cls, detail, extra = False, "隣接", "隣の立方体が近すぎて、開いた指がどの向きでもぶつかる(隣を離して置き直す)", {}
+        extra.update(true_x=round(float(xy(before, args.color)[0]), 4), true_y=round(float(xy(before, args.color)[1]), 4))
+    elif args.stage_failed == "detect" or xy(before, args.color) is None:
         ok, cls, detail, extra = False, "検出失敗", "板のマーカーが 4 個以上見えない、または立方体の色が見つからない", {}
     else:
         ok, cls, detail, extra = False, "届かない", "計画が作れなかった(遠すぎる、可動域の端、机に近い経路など。上の表示を参照)", {}
@@ -125,7 +129,8 @@ with open(LOG, "a", newline="") as f:  # "a": 末尾に追記する。newline=""
 print(f"\n試験 {n}: {args.color}  →  {'成功' if ok else '失敗(' + cls + ')'}  {detail}")
 if extra.get("final_err_mm") not in (None, ""):
     print(f"  置いたあとの位置: ({extra['final_x'] * 1000:.0f}, {extra['final_y'] * 1000:.0f}) mm、置き場の中心から {extra['final_err_mm']} mm")
-print(f"  今回のほかの立方体の動き: {extra.get('moved_others_mm', '')} mm" + (f"({extra['contact']})" if extra.get("contact") else "(接触なし)"))
+if extra.get("moved_others_mm") not in (None, ""):
+    print(f"  今回のほかの立方体の動き: {extra.get('moved_others_mm', '')} mm" + (f"({extra['contact']})" if extra.get("contact") else "(接触なし)"))
 rows = [r for r in csv.DictReader(open(LOG)) if not r["note"].startswith("無効")]  # メモが「無効」で始まる試験(装置の都合で測れなかったもの)は、通算に数えない
 ok_n = sum(r["success"] == "True" for r in rows)
 print(f"  通算: {ok_n} / {len(rows)} 成功(記録: outputs/real_trials.csv)")

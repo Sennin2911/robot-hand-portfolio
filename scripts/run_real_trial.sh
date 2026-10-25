@@ -21,8 +21,11 @@ if ! .venv/bin/python scripts/detect_cubes_world.py --out-json trial_before.json
     .venv/bin/python scripts/judge_real_trial.py --color "$COLOR" --stage-failed detect; exit 1
 fi
 cp outputs/trial_before.json outputs/cubes_detected.json 2>/dev/null  # plan_pick_test.py は、この名前のファイルを読む。 (立方体が 1 つも見つからなければファイルが無く、cp は失敗するが、次の plan_pick_test.py が「検出結果が無い」で止まる)
-if ! MUJOCO_GL=egl .venv/bin/python scripts/plan_pick_test.py --color "$COLOR"; then
-    .venv/bin/python scripts/judge_real_trial.py --color "$COLOR" --stage-failed plan; exit 1
+MUJOCO_GL=egl .venv/bin/python scripts/plan_pick_test.py --color "$COLOR"
+RC=$?  # 直前のコマンドの終了コード(0 = 成功、3 = 隣の立方体が近すぎて、どの向きでも掴めない、その他 = 届かないなど)
+if [ $RC -ne 0 ]; then
+    if [ $RC -eq 3 ]; then STAGE=neighbor; else STAGE=plan; fi
+    .venv/bin/python scripts/judge_real_trial.py --color "$COLOR" --stage-failed $STAGE; exit 1
 fi
 
 ~/lerobot-work/lerobot/.venv/bin/python scripts/real_pick_place.py --color "$COLOR" --auto --refine 1 $CONFIRM_END "${ARGS[@]}"
