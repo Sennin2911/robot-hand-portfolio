@@ -19,7 +19,7 @@ from hand_sim.fixed_board import SIDE_MM, board_marker_corners_world, camera_pos
 from hand_sim.cube_world import marker_mask, white_balance_by_paper, workspace_mask  # noqa: E402
 from hand_sim.real_camera import load_camera, pixel_to_world_plane_K, project_points_K, undistort_image  # noqa: E402
 from hand_sim.vision import find_cube_pose_hsv, square_yaw_from_points  # noqa: E402
-from hand_sim.webcam import grab_frame, list_cameras  # noqa: E402
+from hand_sim.webcam import grab_frame, list_cameras, set_manual_exposure  # noqa: E402
 
 # コマンドラインの引数を受け取る仕組み。[頻度] スクリプトに「設定を変えて実行したい」ときの定番
 parser = argparse.ArgumentParser()
@@ -35,6 +35,10 @@ CUBE_M = 0.030  # 立方体の 1 辺(ノギスで測った値)
 (ROOT / "outputs" / "cubes_detected.json").unlink(missing_ok=True)
 cam = load_camera()
 device = next(devs[0] for name, devs in list_cameras() if "WebCamera" in name)
+# 撮る前に、露出・ホワイトバランス・ゲインを毎回この値に固定する。カメラの設定は、前に動いたスクリプトの値が残るため
+# (record_hand_sample.py は、手の板を読むために露出を 100〜1600 の間で変え、その値を残す)。設定しないと、実行のたびに画像の明るさが変わる。
+# 値は、立方体の色検出が合う条件(露出 300、ホワイトバランス 4500、ゲイン 32)。[頻度] 色で検出するスクリプトでは、毎回固定するのが定番
+set_manual_exposure(device, exposure=300, white_balance=4500, gain=32)
 fixed = undistort_image(grab_frame(device), cam["K"], cam["dist"])
 board = {i: m for i, m in detect_markers(fixed, cam["K"], np.zeros(5), SIDE_MM / 1000).items() if 1 <= i <= 6}
 if len(board) < 4:
