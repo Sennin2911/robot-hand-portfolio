@@ -79,6 +79,10 @@ cam = load_camera()
 found = detect_markers(img, cam["K"], cam["dist"], SIDE_MM / 1000)
 result = camera_pose_from_board(found, cam["K"], cam["dist"], SIDE_MM)
 if result is None or 0 not in found:
+    # 原因を目で確かめられるように、見えていた画像を残す(腕や手が板を隠していないか、露出が合っているか)
+    fail_png = ROOT / "outputs" / f"record_fail_{args.label}.png"
+    cv2.imwrite(str(fail_png), cv2.cvtColor(img, cv2.COLOR_RGB2BGR))  # OpenCV は BGR 順なので、RGB から変換して保存する
+    print(f"  失敗時の画像: {fail_png}")
     sys.exit(f"板(ID 1〜6)か手の板(ID 0)が見つからない(見つかった ID: {sorted(found)})。記録しない")
 cam_pos, cam_R, err, n = result
 R_m, p_m = marker_pose_in_world(found[0]["R"], found[0]["t"], cam_pos, cam_R)
