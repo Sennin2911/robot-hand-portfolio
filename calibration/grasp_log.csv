@@ -1,0 +1,2 @@
+time,tag,plan_x_mm,plan_y_mm,reach_mm,hand_yaw_deg,board_markers,board_reproj_px,cube_found,cube_area_px,dx,dy,dz,used,note
+2026-10-25 23:47:53,PICK_green,249.3,22.8,289.0,-26.0,3,2.4,True,473,0.1,7.6,3.5,False,
