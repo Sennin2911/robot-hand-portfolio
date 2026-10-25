@@ -125,7 +125,8 @@ with open(LOG, "a", newline="") as f:  # "a": 末尾に追記する。newline=""
 print(f"\n試験 {n}: {args.color}  →  {'成功' if ok else '失敗(' + cls + ')'}  {detail}")
 if extra.get("final_err_mm") not in (None, ""):
     print(f"  置いたあとの位置: ({extra['final_x'] * 1000:.0f}, {extra['final_y'] * 1000:.0f}) mm、置き場の中心から {extra['final_err_mm']} mm")
+print(f"  今回のほかの立方体の動き: {extra.get('moved_others_mm', '')} mm" + (f"({extra['contact']})" if extra.get("contact") else "(接触なし)"))
 rows = [r for r in csv.DictReader(open(LOG)) if not r["note"].startswith("無効")]  # メモが「無効」で始まる試験(装置の都合で測れなかったもの)は、通算に数えない
 ok_n = sum(r["success"] == "True" for r in rows)
 print(f"  通算: {ok_n} / {len(rows)} 成功(記録: outputs/real_trials.csv)")
-print(f"  ほかの立方体への接触: 軽い {sum(r['contact'] == '軽い接触' for r in rows)} 回、明らかに動かした {sum(r['contact'] == '明らかに動かした' for r in rows)} 回")
+print(f"  通算の、ほかの立方体への接触: 軽い {sum(r['contact'] == '軽い接触' for r in rows)} 回、明らかに動かした {sum(r['contact'] == '明らかに動かした' for r in rows)} 回")
