@@ -9,6 +9,7 @@ from hand_sim.real_camera import pixel_to_world_plane_K, project_points_K
 from hand_sim.vision import find_cube_pose_hsv
 
 CUBE_M = 0.030  # 立方体の 1 辺
+PADS = {"green": (0.14, 0.17), "red": (0.07, 0.17), "blue": (0.21, 0.12)}  # 色ごとの置き場の中心(世界座標 x, y [m])。plan_pick_test.py(運ぶ先)と judge_real_trial.py(置けたかの判定)が共有する
 
 
 def marker_mask(shape, cam_pos, cam_R, K, margin_px=12):

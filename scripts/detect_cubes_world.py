@@ -26,13 +26,15 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--extend-down", type=int, default=0, metavar="PX",
                     help="探す範囲(黄色の枠)の下の辺を、画像の下方向へ PX 画素広げる(ロボットの左側 = 画像の下。既定 0)。"
                          "画像の下の端は、レンズの較正が届いていない範囲なので、広げるほど位置の精度が落ちうる")
+parser.add_argument("--out-json", default="cubes_detected.json", help="結果を保存する outputs/ の中のファイル名(試験の「掴む前」「置いた後」を別々に残すために変える。既定は plan_pick_test.py が読む名前)")
+parser.add_argument("--out-png", default="real_detect.png", help="印と探す範囲を描いた画像を保存する outputs/ の中のファイル名")
 args = parser.parse_args()
 
 CUBE_M = 0.030  # 立方体の 1 辺(ノギスで測った値)
 # 前回の検出結果を、先に消す。今回の検出が途中で失敗しても(暗くて見つからない、カメラが読めない、マーカーが足りないなど)、
 # 古い位置が残って、plan_pick_test.py がそれで計画を作ってしまわないため。成功した色だけが、最後に書き直される。
 # unlink(missing_ok=True): ファイルを消す。無くてもエラーにしない。[頻度] 「あれば消す」の定番
-(ROOT / "outputs" / "cubes_detected.json").unlink(missing_ok=True)
+(ROOT / "outputs" / args.out_json).unlink(missing_ok=True)
 cam = load_camera()
 device = next(devs[0] for name, devs in list_cameras() if "WebCamera" in name)
 # 撮る前に、露出・ホワイトバランス・ゲインを毎回この値に固定する。カメラの設定は、前に動いたスクリプトの値が残るため
@@ -83,7 +85,7 @@ for color in ("red", "green", "blue"):
     print(f"{color:5s}: 世界座標 x = {xy[0] * 1000:6.1f} mm、y = {xy[1] * 1000:6.1f} mm、向き(世界座標、0〜90°)= {yaw_world:.0f}°(画素 ({u:.0f}, {v:.0f}))")
     cv2.drawMarker(annotated, (int(u), int(v)), draw[color], cv2.MARKER_CROSS, 40, 3)
     cv2.putText(annotated, color, (int(u) + 25, int(v) - 25), cv2.FONT_HERSHEY_SIMPLEX, 1.0, draw[color], 2)
-cv2.imwrite(str(ROOT / "outputs" / "real_detect.png"), annotated)
+cv2.imwrite(str(ROOT / "outputs" / args.out_png), annotated)
 if out:
-    (ROOT / "outputs" / "cubes_detected.json").write_text(json.dumps({"cam_pos_m": cam_pos.tolist(), "cubes": out}, ensure_ascii=False, indent=2))
-    print("保存: outputs/cubes_detected.json、outputs/real_detect.png")
+    (ROOT / "outputs" / args.out_json).write_text(json.dumps({"cam_pos_m": cam_pos.tolist(), "board_markers": n, "board_reproj_px": float(reproj), "cubes": out}, ensure_ascii=False, indent=2))
+    print(f"保存: outputs/{args.out_json}、outputs/{args.out_png}")

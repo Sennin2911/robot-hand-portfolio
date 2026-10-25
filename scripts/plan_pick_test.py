@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "src"))  # src フォルダを import の探索先
 
 import mujoco  # noqa: E402
 import numpy as np  # noqa: E402
+from hand_sim.cube_world import PADS  # noqa: E402  置き場の中心(judge_real_trial.py と共有)
 from hand_sim.grasp_calibration import load_site_offset  # noqa: E402
 from hand_sim.sim_real import real_to_sim, sim_to_real  # noqa: E402
 from hand_sim.so101_grasp import GRIP_CLOSE, GRIP_OPEN, plan_for_cube  # noqa: E402
@@ -29,7 +30,6 @@ parser.add_argument("--hand-error", type=float, nargs=2, metavar=("DX_MM", "DY_M
                     help="実機で測った「手先 − 目標」のずれ(世界座標 x = 前、y = 左、mm)。指定すると、そのぶん反対へずらした目標で計画する(掴む位置・置く位置の両方)。例: 手先が目標より後ろへ 8 mm、右へ 5 mm → --hand-error -8 -5")
 args = parser.parse_args()
 
-PADS = {"green": (0.14, 0.17), "red": (0.07, 0.17), "blue": (0.21, 0.12)}  # 置き場の中心(plan_pad_test.py と同じ)
 CUBE_M = 0.030
 REST = {"shoulder_pan.pos": -5.9, "shoulder_lift.pos": -103.8, "elbow_flex.pos": 96.2, "wrist_flex.pos": -108.5, "wrist_roll.pos": 0.0, "gripper.pos": 9.6}
 LIM = {"shoulder_pan": 119.1, "shoulder_lift": 106.1, "elbow_flex": 97.3, "wrist_flex": 111.9}  # 実機の可動域の半分
