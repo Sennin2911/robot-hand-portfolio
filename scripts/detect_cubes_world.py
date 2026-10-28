@@ -2,10 +2,11 @@
 outputs/cubes_detected.json に保存する(掴む計画 plan_pick_test.py が読む)。画像は outputs/real_detect.png(印と探す範囲を描いたもの)。
 立方体の中心の高さは、1 辺(30 mm)の半分(15 mm)の面に当てて換算する。板のマーカーが 4 個未満しか見えなければ、何も保存しない。
 
-使い方(この .venv で実行): .venv/bin/python scripts/detect_cubes_world.py [--extend-down 120]
+使い方(この .venv で実行): .venv/bin/python scripts/detect_cubes_world.py [--extend-down 120] [--exposure 600 --gain 0]
 """
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -26,6 +27,10 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--extend-down", type=int, default=0, metavar="PX",
                     help="探す範囲(黄色の枠)の下の辺を、画像の下方向へ PX 画素広げる(ロボットの左側 = 画像の下。既定 0)。"
                          "画像の下の端は、レンズの較正が届いていない範囲なので、広げるほど位置の精度が落ちうる")
+# os.environ.get("名前", "既定値"): 環境変数を読む。無ければ既定値。[頻度] 「シェルスクリプト越しに設定を渡したい」ときの定番
+# (run_real_trial.sh は、このスクリプトに引数を渡せないので、DETECT_EXPOSURE=600 scripts/run_real_trial.sh green のように環境変数で渡す)
+parser.add_argument("--exposure", type=int, default=int(os.environ.get("DETECT_EXPOSURE", "300")), help="露出(0.1 ミリ秒単位。既定 300。環境変数 DETECT_EXPOSURE でも指定できる)")
+parser.add_argument("--gain", type=int, default=int(os.environ.get("DETECT_GAIN", "32")), help="ゲイン(0〜63。既定 32。環境変数 DETECT_GAIN でも指定できる)")
 parser.add_argument("--out-json", default="cubes_detected.json", help="結果を保存する outputs/ の中のファイル名(試験の「掴む前」「置いた後」を別々に残すために変える。既定は plan_pick_test.py が読む名前)")
 parser.add_argument("--out-png", default="real_detect.png", help="印と探す範囲を描いた画像を保存する outputs/ の中のファイル名")
 args = parser.parse_args()
@@ -39,8 +44,8 @@ cam = load_camera()
 device = next(devs[0] for name, devs in list_cameras() if "WebCamera" in name)
 # 撮る前に、露出・ホワイトバランス・ゲインを毎回この値に固定する。カメラの設定は、前に動いたスクリプトの値が残るため
 # (record_hand_sample.py は、手の板を読むために露出を 100〜1600 の間で変え、その値を残す)。設定しないと、実行のたびに画像の明るさが変わる。
-# 値は、立方体の色検出が合う条件(露出 300、ホワイトバランス 4500、ゲイン 32)。[頻度] 色で検出するスクリプトでは、毎回固定するのが定番
-set_manual_exposure(device, exposure=300, white_balance=4500, gain=32)
+# 既定値は、立方体の色検出が合う条件(露出 300、ホワイトバランス 4500、ゲイン 32)。暗いときは --exposure / --gain(または環境変数)で変える。[頻度] 色で検出するスクリプトでは、毎回固定するのが定番
+set_manual_exposure(device, exposure=args.exposure, white_balance=4500, gain=args.gain)
 fixed = undistort_image(grab_frame(device), cam["K"], cam["dist"])
 board = {i: m for i, m in detect_markers(fixed, cam["K"], np.zeros(5), SIDE_MM / 1000).items() if 1 <= i <= 6}
 if len(board) < 4:

@@ -199,13 +199,18 @@ _HSV_RANGES = {  # color: (色相の下限, 上限, 彩度の下限, 明るさ�
 }
 
 
-def color_mask_hsv(img_rgb, color):
-    """img_rgb(RGB の順)の中で、color("red"、"green"、"blue")の立方体の色の画素が True のマスクを返す。"""
+_V_GROW = 50  # 側面を取り込む「ゆるい判定」の明るさの下限(find_cube_pose_hsv)。実機で、青の立方体の側面の明るさは約 50〜100(上面は 120 以上)
+
+
+def color_mask_hsv(img_rgb, color, v_min=None):
+    """img_rgb(RGB の順)の中で、color("red"、"green"、"blue")の立方体の色の画素が True のマスクを返す。
+    v_min: 明るさの下限を、_HSV_RANGES の値の代わりに指定する(省略なら _HSV_RANGES の値)。find_cube_pose_hsv が、立方体の暗い側面まで取り込むときに使う。"""
     import cv2  # 実機用の関数だけが使うので、ここで import する(sim 側の読み込みを軽く保つため)
 
     hsv = cv2.cvtColor(np.ascontiguousarray(img_rgb), cv2.COLOR_RGB2HSV)
     h, sat, val = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
-    lo, hi, s_min, v_min = _HSV_RANGES[color]
+    lo, hi, s_min, v_min_default = _HSV_RANGES[color]
+    v_min = v_min_default if v_min is None else v_min
     in_hue = (h >= lo) | (h <= hi) if lo > hi else (h >= lo) & (h <= hi)
     return in_hue & (sat >= s_min) & (val >= v_min)
 
@@ -219,6 +224,17 @@ def find_cube_pose_hsv(img_rgb, color, roi_mask=None, return_mask=False):
     if roi_mask is not None:
         mask = mask & roi_mask
     mask = ndimage.binary_opening(mask, iterations=2)  # 細かいノイズ(1〜2 画素の点)を消す
+    # 側面まで取り込む(2 段階の判定。ヒステリシスと呼ぶ。[頻度] 画像処理の定番): 立方体の側面は暗く、上の厳しい判定(明るさの下限 _HSV_RANGES)は通らないことがある。
+    # 青は、実機の照明で、上面だけ(立方体の約 1/4 の画素)しか通らず、中心が約 12 mm ずれて、掴みに失敗した(試験 46〜48)。そこで、
+    # 明るさの下限を _V_GROW まで下げた「ゆるい判定」を作り、その塊のうち、厳しい判定の画素を含むものだけを使う(含まない塊 = ロボットの黒い部品などは、除かれる)。
+    loose = color_mask_hsv(img_rgb, color, v_min=min(_HSV_RANGES[color][3], _V_GROW))
+    if roi_mask is not None:
+        loose = loose & roi_mask
+    loose_labels, n_loose = ndimage.label(loose)
+    if n_loose:
+        seeded = np.unique(loose_labels[mask])  # 厳しい判定の画素が乗っている、ゆるい塊の番号
+        mask = np.isin(loose_labels, seeded[seeded > 0])  # np.isin: 「配列の各要素が、リストの中にあるか」を True / False で返す。seeded[seeded > 0]: 背景(番号 0)を除く
+        mask = ndimage.binary_opening(mask, iterations=2)
     labels, n = ndimage.label(mask)
     if n == 0:
         return (None, None) if return_mask else None
