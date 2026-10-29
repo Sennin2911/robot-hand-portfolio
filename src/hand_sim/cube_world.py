@@ -84,3 +84,46 @@ def locate_cube(undistorted_rgb, color, cam_pos, cam_R, K):
     u, v, _yaw = pose
     xy = pixel_to_world_plane_K(u, v, cam_pos, cam_R, K, CUBE_M / 2)[:2]
     return xy, int(mask.sum())
+
+
+def fit_cube_yaw(mask, cam_pos, cam_R, K, center_xy, search_mm=8.0):
+    """見えている立方体の塊(mask)に、立方体の 3 次元の形を重ねて合わせ、机の上での向き yaw [度、0〜90]・中心 (x, y) [m]・重なり(IoU)を返す。
+    なぜ要るか: 立方体の上面と側面は同じ色で、明るさでは分けられない(明るい上位 40% の画素から向きを出す旧方式は、同じ画像でも 41° ↔ 67° と揺れた)。
+    形から合わせれば、側面が見えている分も計算に入るので、上面と側面を取り違えない。
+    やり方: 向き(1° 刻み)と、中心の位置(center_xy のまわり ±search_mm、2 mm 刻み)を変え、立方体の 8 つの角を画像に映して、囲んだ形(凸包)と mask の IoU
+    (重なった面積 ÷ 合わせた面積。1 に近いほどよく合う)が最大のものを選ぶ。[頻度] 「モデルを映して、見えたものと重ねる」は、物体の姿勢を推定する定番の考え方(analysis-by-synthesis)。
+    center_xy: 中心の最初の見積もり(世界座標 [m])。mask の外接長方形の中心を、立方体の半分の高さに当てた値でよい。"""
+    v_idx, u_idx = np.nonzero(mask)
+    u0, u1, v0, v1 = u_idx.min() - 30, u_idx.max() + 30, v_idx.min() - 30, v_idx.max() + 30  # 計算を軽くするため、塊のまわりだけ切り出す
+    target = mask[max(v0, 0):v1, max(u0, 0):u1].astype(np.uint8)
+    off = np.array([max(u0, 0), max(v0, 0)], dtype=float)
+    area_t = target.sum()
+    h = CUBE_M / 2
+    corners = np.array([[sx * h, sy * h, sz * h + h] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)])  # 立方体の中心を原点にした 8 つの角(底面が z = 0)
+
+    def iou(yaw_rad, cx, cy):
+        c, s = np.cos(yaw_rad), np.sin(yaw_rad)
+        R = np.array([[c, -s, 0], [s, c, 0], [0, 0, 1]])
+        uv = project_points_K(corners @ R.T + [cx, cy, 0.0], cam_pos, cam_R, K) - off
+        canvas = np.zeros_like(target)
+        cv2.fillConvexPoly(canvas, cv2.convexHull(uv.astype(np.float32)).astype(np.int32), 1)  # 8 つの角を囲む凸な形を塗る
+        inter = (canvas & target).sum()
+        return inter / max(canvas.sum() + area_t - inter, 1)
+
+    best = (-1.0, 0.0, center_xy[0], center_xy[1])
+    steps = np.arange(-search_mm, search_mm + 0.1, 2.0) / 1000
+    for yaw in range(0, 90, 3):  # 粗い探索(3° 刻み)
+        for dx in steps:
+            for dy in steps:
+                score = iou(np.radians(yaw), center_xy[0] + dx, center_xy[1] + dy)
+                if score > best[0]:
+                    best = (score, yaw, center_xy[0] + dx, center_xy[1] + dy)
+    score, yaw0, cx, cy = best
+    for yaw in range(int(yaw0) - 3, int(yaw0) + 4):  # 細かい探索(1° 刻み)
+        for dx in np.arange(-0.002, 0.0021, 0.001):
+            for dy in np.arange(-0.002, 0.0021, 0.001):
+                sc = iou(np.radians(yaw), cx + dx, cy + dy)
+                if sc > best[0]:
+                    best = (sc, yaw, cx + dx, cy + dy)
+    score, yaw, cx, cy = best
+    return float(yaw % 90), (cx, cy), float(score)

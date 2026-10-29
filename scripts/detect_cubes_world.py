@@ -17,9 +17,9 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 from hand_sim.aruco_marker import detect_markers  # noqa: E402
 from hand_sim.fixed_board import SIDE_MM, board_marker_corners_world, camera_pose_from_board  # noqa: E402
-from hand_sim.cube_world import search_hull, search_roi, white_balance_by_paper  # noqa: E402
+from hand_sim.cube_world import fit_cube_yaw, search_hull, search_roi, white_balance_by_paper  # noqa: E402
 from hand_sim.real_camera import load_camera, pixel_to_world_plane_K, project_points_K, undistort_image  # noqa: E402
-from hand_sim.vision import find_cube_pose_hsv, square_yaw_from_points  # noqa: E402
+from hand_sim.vision import find_cube_pose_hsv  # noqa: E402
 from hand_sim.webcam import grab_frame, list_cameras, set_manual_exposure  # noqa: E402
 
 # コマンドラインの引数を受け取る仕組み。[頻度] スクリプトに「設定を変えて実行したい」ときの定番
@@ -73,13 +73,12 @@ for color in ("red", "green", "blue"):
         continue
     u, v, yaw = pose
     xy = pixel_to_world_plane_K(u, v, cam_pos, cam_R, cam["K"], CUBE_M / 2)[:2]
-    # 向き: 画像の向きは斜め上からの見え方でゆがむので、世界座標で出す。立方体の側面(暗い)を避け、塊の中で明るい上位 40% の画素 = 上面を、
-    # 上面の高さ(30 mm)の面に当てて、その点の集まりの向きを見る。
-    v_idx, u_idx = np.nonzero(mask)
-    bright = fixed[v_idx, u_idx].astype(float).sum(axis=1)
-    top = bright >= np.quantile(bright, 0.6)
-    top_xy = np.array([pixel_to_world_plane_K(uu, vv, cam_pos, cam_R, cam["K"], CUBE_M)[:2] for uu, vv in zip(u_idx[top][::10], v_idx[top][::10])])
-    yaw_world = square_yaw_from_points(top_xy)
+    # 向き: 立方体の 3 次元の形を画像に映して、見えている塊と重なりが最大になる向きを探す(cube_world.fit_cube_yaw)。
+    # 旧方式(塊の中で明るい上位 40% の画素 = 上面、と見なして向きを出す)は、上面と側面が同じ色で明るさでは分けられず、同じ画像でも 41° ↔ 67° と揺れた。
+    # 位置(x, y)は、これまでどおり塊の外接長方形の中心(定規で測った位置との差 2 mm 前後)。形の当てはめの中心とは、数 mm 違う。
+    yaw_world, _fit_center, fit_iou = fit_cube_yaw(mask, cam_pos, cam_R, cam["K"], pixel_to_world_plane_K(u, v, cam_pos, cam_R, cam["K"], CUBE_M / 2)[:2])
+    if fit_iou < 0.5:
+        print(f"  (注意: {color} の形の当てはめの重なり IoU = {fit_iou:.2f} と低い。向きが当てにならない。塊が欠けている・他の物と混ざっている可能性)")
     out[color] = {"x_m": float(xy[0]), "y_m": float(xy[1]), "yaw_deg": yaw_world, "uv": [float(u), float(v)]}
     print(f"{color:5s}: 世界座標 x = {xy[0] * 1000:6.1f} mm、y = {xy[1] * 1000:6.1f} mm、向き(世界座標、0〜90°)= {yaw_world:.0f}°(画素 ({u:.0f}, {v:.0f}))")
     cv2.drawMarker(annotated, (int(u), int(v)), draw[color], cv2.MARKER_CROSS, 40, 3)
