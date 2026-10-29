@@ -16,6 +16,7 @@
 """
 import argparse
 import json
+import statistics
 import subprocess
 import sys
 import time
@@ -29,6 +30,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--color", required=True, choices=["red", "green", "blue"])
 parser.add_argument("--until", type=int, default=8, help="この段階までで止める(1〜8)")
 parser.add_argument("--refine", type=int, default=0, help="関節の読みによる補正の回数(動いたあと、読みと指令の差を指令に足す)。0 = しない")
+parser.add_argument("--no-feedforward", action="store_true",
+                    help="段階ごとの「前回までの補正量」を、最初から指令へ足す仕組み(下の BIAS_FILE)を使わない。使うと、動いたあとの微調整の動き(止まる → 待つ → 小さく動く)がほぼ無くなり、滑らかになる")
+parser.add_argument("--refine-tol", type=float, default=0.4, help="動いたあとの関節の読みと指令の差が、これ(度)未満なら、微調整の動きをしない(--refine が 1 以上のとき)")
 parser.add_argument("--record", action="store_true",
                     help="段階 1、2、3 で止まったとき、手の板をカメラで撮って、手先の実際の位置と立方体の位置を記録する(labelは PICK_<色>_<段階>)。"
                          "analyze_grasp_offset.py(掴む前)と update_grasp_offset.py(段階 3 = 掴んだ直後。指の面のずれを貯める)が読む。手の板が映る位置だけ")
@@ -43,6 +47,40 @@ parser.add_argument("--grasp-margin", type=float, default=3.0,
 parser.add_argument("--speed", type=float, default=1.0, help="動かす速さの倍率(2 なら、計画の秒数の半分で動かす)。降下(2、6)は、安全のため 1.5 倍までに抑える")
 parser.add_argument("--settle", type=float, default=1.0, help="動いたあと、止まるのを待つ秒数")
 args = parser.parse_args()
+
+# --- 補正量の先回し(フィードフォワード)---
+# サーボは、重力や摩擦で、指令から毎回ほぼ同じ量だけずれて止まる(定常偏差)。段階ごとに「最終的に届いた指令」を覚えておき、次回は最初からその分を足して動く。
+# 動いたあとに「読んで、差を見て、もう一度小さく動く」補正をしなくてよくなるので、動きが途切れない。ずれ方は姿勢で変わるので、直近 10 回の中央値(外れ値に強い)を使う。
+# 上限は 3° (これ以上の補正量は、サーボ以外の原因を疑うべきなので、足さない)。[頻度] 制御では定番の考え方。このファイルの書き方(json で貯める)は、この計画の独自のもの
+BIAS_FILE = ROOT / "calibration" / "servo_bias.json"
+BIAS_MAX_DEG, BIAS_KEEP = 3.0, 10
+
+
+def load_bias():
+    """{段階の番号: {"関節.pos": [過去の補正量, ...]}} を返す。ファイルが無い・読めないときは空。try/except: 失敗しても動かすのを止めない。[頻度] 補助的なファイルの読み込みでは定番"""
+    try:
+        return json.loads(BIAS_FILE.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def predicted_bias(table, stage):
+    """この段階で足す補正量(関節ごと、度)。履歴の中央値。履歴が無ければ 0。"""
+    hist = table.get(stage, {})
+    return {k: max(-BIAS_MAX_DEG, min(BIAS_MAX_DEG, statistics.median(hist[k]))) if hist.get(k) else 0.0 for k in ARM_KEYS}
+
+
+def wait_settled(robot, max_seconds):
+    """腕が止まる(読みの変化が 0.15° 未満)まで待つ。最長 max_seconds。固定の時間待ちより、止まった瞬間に次へ進めるので速い。戻り値: 最後の読み。"""
+    deadline, prev = time.time() + max_seconds, None
+    time.sleep(0.2)
+    while True:
+        obs = robot.get_observation()
+        if (prev is not None and max(abs(obs[k] - prev[k]) for k in ARM_KEYS) < 0.15) or time.time() > deadline:
+            return obs
+        prev = obs
+        time.sleep(0.1)
+
 
 plan_file = ROOT / "outputs" / f"pick_plan_{args.color}.json"
 if not plan_file.exists():  # 計画が無いまま実行したときに、分かりやすい案内を出す(腕は動かしていない)
@@ -84,29 +122,47 @@ try:
     t_start = time.time()  # 人が Enter を押すまでの待ち時間を、1 回あたりの時間(cycle_s)に含めない
 
     current = dict(start)
+    bias_table = load_bias()
     for i, st in enumerate(stages, start=1):
         if st["name"][0] in "236" and not args.auto:
             input(f"\n[{st['name']}] 動かす前の確認(目で見て、問題なければ Enter): ")
         else:
             print(f"\n--- {st['name']}")
         goal = dict(st["cmd"])
-        speed = min(args.speed, 1.5) if st["name"][0] in "26" else args.speed
-        move_to(robot, current, goal, max(0.8, st["seconds"] / speed))  # 速くしすぎないよう、1 回の動きは 0.8 秒以上かける
-        current = goal
-        time.sleep(args.settle if st["name"][0] in "1256" else min(args.settle, 0.3))  # 読みで補正する段階(腕が止まって、読みが落ち着くのを待つ)だけ長く待つ。それ以外は短く
-        if st["name"][0] in "1256":  # 腕が動く段階だけ、関節の読みで補正(指だけ動かす 3、7 と、持ち上げ・上がる 4、8 は、しない)
+        stage = st["name"][0]
+        arm_stage = stage in "124568"  # 腕が動く段階
+        speed = min(args.speed, 1.5) if stage in "26" else args.speed
+        bias = predicted_bias(bias_table, stage) if (arm_stage and not args.no_feedforward) else {k: 0.0 for k in ARM_KEYS}
+        if arm_stage:
+            sent = {**goal, **{k: goal[k] + bias[k] for k in ARM_KEYS}}  # 補正量を足した指令(足す量が 0 なら goal と同じ)。{**a, **b}: 辞書を合成し、同じキーは後ろが勝つ。[頻度] 定番
+        else:
+            sent = {**goal, **{k: current[k] for k in ARM_KEYS}}  # 指だけ動かす段階(3、7)は、腕を今の指令のままにする(goal に戻すと、足した補正量の分、腕が動いてしまう)
+        if any(abs(v) >= 0.3 for v in bias.values()):
+            print("  先回し: " + ", ".join(f"{k.split('.')[0][:9]} {v:+.1f}°" for k, v in bias.items()))
+        move_to(robot, current, sent, max(0.8, st["seconds"] / speed))  # 速くしすぎないよう、1 回の動きは 0.8 秒以上かける
+        current = sent
+        obs = wait_settled(robot, args.settle if stage in "1256" else min(args.settle, 0.3))  # 止まったらすぐ次へ(最長は --settle)
+        if stage in "1256":  # 腕が動く段階だけ、関節の読みで補正(指だけ動かす 3、7 と、持ち上げ・上がる 4、8 は、しない)
             for it in range(args.refine):
-                now = robot.get_observation()
-                diff = {k: goal[k] - now[k] for k in ARM_KEYS}
-                if max(abs(v) for v in diff.values()) < 0.3:
-                    break  # 0.3° 未満なら、十分に届いている
+                diff = {k: goal[k] - obs[k] for k in ARM_KEYS}
+                if max(abs(v) for v in diff.values()) < args.refine_tol:
+                    break  # 十分に届いている(先回しが効いていれば、ここで終わる。動きは途切れない)
                 corr = dict(current)
                 for k, v in diff.items():
-                    corr[k] = goal[k] + max(-3.0, min(3.0, v))  # 差を指令に足す。一度に 3° まで
+                    corr[k] = current[k] + max(-3.0, min(3.0, v))  # 差を、今の指令に足す。一度に 3° まで
                 print("  補正" + str(it + 1) + ": " + ", ".join(f"{k.split('.')[0][:9]} {v:+.1f}°" for k, v in diff.items()))
                 move_to(robot, current, corr, 1.5)
                 current = corr
-                time.sleep(1.0)
+                obs = wait_settled(robot, 1.0)
+        if arm_stage and not args.no_feedforward:
+            # この段階で「届いた」指令 = 最後に送った指令 + (目標 − 読み)。これと目標の差が、次回に足す補正量
+            for k in ARM_KEYS:
+                needed = current[k] + (goal[k] - obs[k]) - goal[k]
+                hist = bias_table.setdefault(stage, {}).setdefault(k, [])
+                hist.append(round(needed, 2))
+                del hist[:-BIAS_KEEP]  # 古いものから捨てて、直近 BIAS_KEEP 個だけ残す。[頻度] 定番のスライス
+            BIAS_FILE.parent.mkdir(exist_ok=True)
+            BIAS_FILE.write_text(json.dumps(bias_table, indent=1))
         last = i
         obs = robot.get_observation()
         if args.record and st["name"][0] in "123":
