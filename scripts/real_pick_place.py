@@ -30,6 +30,8 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--color", required=True, choices=["red", "green", "blue"])
 parser.add_argument("--until", type=int, default=8, help="この段階までで止める(1〜8)")
 parser.add_argument("--refine", type=int, default=0, help="関節の読みによる補正の回数(動いたあと、読みと指令の差を指令に足す)。0 = しない")
+parser.add_argument("--arm-p", type=int, default=24, help="腕の 5 関節のサーボの P_Coefficient(位置の追従の強さ)。LeRobot の既定は 16。降下の振動を目で比べて決めた(P 10 は悪化、24 が最良、32 は jerk が増えた)。16 にすると既定のまま")
+parser.add_argument("--arm-d", type=int, default=64, help="腕の 5 関節のサーボの D_Coefficient(揺れを抑える成分)。LeRobot の既定は 32。64 で降下の振動が減った")
 parser.add_argument("--no-feedforward", action="store_true",
                     help="段階ごとの「前回までの補正量」を、最初から指令へ足す仕組み(下の BIAS_FILE)を使わない。使うと、動いたあとの微調整の動き(止まる → 待つ → 小さく動く)がほぼ無くなり、滑らかになる")
 parser.add_argument("--refine-tol", type=float, default=0.4, help="動いたあとの関節の読みと指令の差が、これ(度)未満なら、微調整の動きをしない(--refine が 1 以上のとき)")
@@ -112,6 +114,12 @@ try:
         print("今の姿勢が、休めの姿勢(計画の前提)から離れているので、何も動かさずに終了します。\n  " + "\n  ".join(far))
         abort_reason = "not_at_rest: 開始の姿勢が休めの姿勢から離れている"
         raise SystemExit(1)
+    # 腕のサーボの P、D を書き換える。P、D は EEPROM の値で、トルクを切らないと書けない(LeRobot も接続時にやっている)。
+    # 休めの姿勢にいることを確かめた直後なので、切って(腕は休めの姿勢の土台に載る)から入れ直しても安全。グリッパーは変えない(P は挟む力に比例するため、クッションの調整が変わる)
+    with robot.bus.torque_disabled():  # with: ブロックの間だけトルクを切り、抜けると自動で入れ直す。[頻度] 機器の設定を書き換えるときの定番
+        for motor in ("shoulder_pan", "shoulder_lift", "elbow_flex", "wrist_flex", "wrist_roll"):
+            robot.bus.write("P_Coefficient", motor, args.arm_p)
+            robot.bus.write("D_Coefficient", motor, args.arm_d)
     c = plan["cube"]
     print(f"計画 {plan['tag']}: 立方体 ({c['x_m'] * 1000:.0f}, {c['y_m'] * 1000:.0f}) mm、手の向き {plan['hand_yaw_deg']:.0f}°。段階 {args.until} まで")
     print(f"{'段階':28s}" + "".join(f"{n[:6]:>7s}" for n in JOINTS) + "  秒")
