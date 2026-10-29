@@ -28,10 +28,16 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--color", required=True, choices=["red", "green", "blue"])
 parser.add_argument("--hand-error", type=float, nargs=2, metavar=("DX_MM", "DY_MM"), default=(0.0, 0.0),
                     help="実機で測った「手先 − 目標」のずれ(世界座標 x = 前、y = 左、mm)。指定すると、そのぶん反対へずらした目標で計画する(掴む位置・置く位置の両方)。例: 手先が目標より後ろへ 8 mm、右へ 5 mm → --hand-error -8 -5")
+parser.add_argument("--start-from", help="出発の姿勢(実機の関節の指令値 {\"shoulder_pan.pos\": ..., ...} の JSON ファイル)。連続仕分けで、前の立方体を置いた姿勢から、そのまま次の立方体へ向かうときに使う。"
+                                         "指定しなければ、従来どおり休めの姿勢から始める計画を作る")
 args = parser.parse_args()
 
 CUBE_M = 0.030
 REST = {"shoulder_pan.pos": -5.9, "shoulder_lift.pos": -103.8, "elbow_flex.pos": 96.2, "wrist_flex.pos": -108.5, "wrist_roll.pos": 0.0, "gripper.pos": 9.6}
+START = dict(REST)  # 出発の姿勢。--start-from があれば、その姿勢(休めの姿勢でなく、前の置き場の真上など)
+if args.start_from:
+    START = {k: float(v) for k, v in json.loads(Path(args.start_from).read_text()).items() if k in REST}  # 辞書の内包表記: 条件に合うキーだけ取り出して、値を数値にする。[頻度] 定番
+    print(f"出発の姿勢: {args.start_from}(休めの姿勢ではない): " + ", ".join(f"{k.split('.')[0][:6]} {v:.1f}" for k, v in START.items()))
 LIM = {"shoulder_pan": 119.1, "shoulder_lift": 106.1, "elbow_flex": 97.3, "wrist_flex": 111.9}  # 実機の可動域の半分
 MARGIN = 8.0  # 可動域の端から離す [度]
 
@@ -123,7 +129,7 @@ stages = [
     ("8 上がる", "place_above", REAL_GRIP_OPEN),
 ]
 plan = {"neighbors": [[round(x, 4), round(y, 4)] for x, y, _ in neighbors], "avoided_neighbor": bool(info.get("skipped")), "neighbor_clearance_mm": info.get("clearance_mm"),
-        "tag": f"PICK_{args.color}", "assumed_start": REST, "home": REST, "color": args.color, "cube": cube, "hand_yaw_deg": float(np.degrees(hand_yaw)),
+        "tag": f"PICK_{args.color}", "assumed_start": START, "home": REST, "color": args.color, "cube": cube, "hand_yaw_deg": float(np.degrees(hand_yaw)),
         "gripper_open": G_OPEN, "gripper_close": G_CLOSE, "gripper_empty": REAL_GRIP_EMPTY, "stages": []}
 for name, pose, grip in stages:
     cmd = real_cmd(poses[pose], grip)
@@ -159,7 +165,7 @@ def seconds_between(a, b):
     return float(np.clip(max(abs(a[k] - b[k]) for k in a if k != "gripper.pos") / 12.0, 3.0, 14.0))  # 1 秒あたり 12° 以下
 
 
-chk = [("休めの姿勢 → 1", REST, plan["stages"][0]["cmd"]), ("3 → 4(持ち上げ)", plan["stages"][2]["cmd"], plan["stages"][3]["cmd"]),
+chk = [("出発の姿勢 → 1" if args.start_from else "休めの姿勢 → 1", START, plan["stages"][0]["cmd"]), ("3 → 4(持ち上げ)", plan["stages"][2]["cmd"], plan["stages"][3]["cmd"]),
        ("4 → 5(運ぶ)", plan["stages"][3]["cmd"], plan["stages"][4]["cmd"]), ("7 → 8(上がる)", plan["stages"][6]["cmd"], plan["stages"][7]["cmd"]),
        ("1 → 休めの姿勢(途中でやめたとき)", plan["stages"][0]["cmd"], REST), ("8 → 休めの姿勢", plan["stages"][7]["cmd"], REST)]
 ok_all = True
@@ -173,7 +179,7 @@ for label, a, b in chk:
 if not ok_all:
     print("範囲外: 机に近い経路がある。計画を作りません")
     sys.exit(4)
-prev = REST
+prev = START
 for st in plan["stages"]:
     st["seconds"] = 6.0 if st["name"][0] in "26" else (1.5 if st["name"][0] in "37" else seconds_between(prev, st["cmd"]))
     prev = st["cmd"]

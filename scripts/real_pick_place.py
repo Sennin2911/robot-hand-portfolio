@@ -16,6 +16,8 @@
 """
 import argparse
 import json
+import os
+import shutil
 import statistics
 import subprocess
 import sys
@@ -55,6 +57,10 @@ parser.add_argument("--grasp-max", type=float, default=25.0,
                          "面で挟んだ実測は 20.2〜22.1(30 mm)。読み 1 あたり約 1.8 mm なので、25 は幅 約 35 mm に相当。対角(42 mm)なら約 28.6。立方体の大きさを変えたら、この値も変える")
 parser.add_argument("--speed", type=float, default=1.0, help="動かす速さの倍率(2 なら、計画の秒数の半分で動かす)。降下(2、6)は、安全のため 1.5 倍までに抑える")
 parser.add_argument("--settle", type=float, default=1.0, help="動いたあと、止まるのを待つ秒数")
+parser.add_argument("--then", nargs="*", default=[], choices=["red", "green", "blue"], metavar="COLOR",
+                    help="連続仕分け。--color の色を運んだあと、腕を休めの姿勢へ戻さず、置いた姿勢のまま、ここに並べた色を順に運ぶ(例: --then green blue)。"
+                         "色の切り替えのたびに、検出と計画を、この中から呼び出す(今の姿勢のまま検出し、腕が立方体を隠して見えないときだけ、休めの姿勢へ戻って検出し直す)。"
+                         "前の色の判定(judge_real_trial.py)も、切り替えのときに行う。最後の色だけは、run_real_trial.sh が、休めの姿勢へ戻ったあとの検出と判定をする")
 args = parser.parse_args()
 
 # --- 補正量の先回し(フィードフォワード)---
@@ -114,6 +120,108 @@ class TrialAbort(Exception):
     """--auto の安全装置が働いたときに投げる。class で自分用の例外を作る書き方。[頻度] 「この条件になったら止める」を呼び出し元へ伝えたいときの定番"""
 
 
+PY = str(ROOT / ".venv" / "bin" / "python")  # 検出・計画・判定は、LeRobot の環境ではなく、プロジェクトの環境(.venv)で動かす(mujoco などがあるため)
+OUT = ROOT / "outputs"
+result_judged = False  # 最後の色の判定を、すでに切り替えのときに済ませたか(True なら、run_real_trial.sh は、最後の判定を飛ばす)
+
+
+def write_result():
+    """今の色の結果を real_trial_result.json に書く(判定 judge_real_trial.py が読む)。"""
+    (OUT / "real_trial_result.json").write_text(json.dumps(
+        {"tag": plan["tag"], "time": time.strftime("%Y-%m-%d %H:%M:%S"), "last_stage": last, "total_stages": len(plan["stages"]), "arm_moved": arm_moved, "abort_reason": abort_reason,
+         "grip_after_close": grip_after_close, "max_joint_err_deg": round(max_joint_err, 2), "cycle_s": round(time.time() - t_start, 1), "judged": result_judged},
+        ensure_ascii=False, indent=2))
+
+
+def recover_to_rest():
+    """真上の姿勢(段階 1 か 5)を経由して、休めの姿勢へ戻る。掴んだままなら、真上で放す。途中で中断・中止したときと、終了のときに使う。"""
+    global current
+    if current is None:
+        return
+    current = {k: v for k, v in robot.get_observation().items() if k.endswith(".pos")}  # 途中で中断したときのため、今の実際の姿勢から動かす
+    via = plan["stages"][4 if last >= 5 else 0]["cmd"]
+    if last >= 2:  # 降下した後は、まず真上へ(指の状態はそのまま)
+        up = {**via, "gripper.pos": current["gripper.pos"]}
+        move_to(robot, current, up, 3.0)
+        current = up
+        if current["gripper.pos"] < plan["gripper_open"] - 5:  # 立方体を掴んだまま(指が閉じている)なら、真上で放す(5 cm ほどの高さ。休めの姿勢へ畳むと、立方体を挟んだまま机や腕に当たる)
+            if not args.auto:
+                input("\n立方体を掴んだままです。真上で放します。下に手などが無いことを確認したら Enter: ")
+            opened = {**current, "gripper.pos": plan["gripper_open"]}
+            move_to(robot, current, opened, 1.5)
+            current = opened
+    move_to(robot, current, {**plan["home"], "gripper.pos": current["gripper.pos"]}, max(3.0, plan.get("return_seconds", 8.0) / args.speed))  # 戻りも --speed に従う(ただし 3 秒以上)
+
+
+def run_detect(stem):
+    """立方体の検出(detect_cubes_world.py)を、別プロセスで行う。結果は outputs/<stem>.json / .png、ログは outputs/trial_detect.log(検出失敗の原因の記録に使う)。
+    戻り値: (終了コード, 検出結果の辞書。失敗・何も見つからなければ None)。腕は、今の姿勢のまま止まっている(トルクが入っていて、保持する)。"""
+    r = subprocess.run([PY, str(ROOT / "scripts" / "detect_cubes_world.py"), "--out-json", f"{stem}.json", "--out-png", f"{stem}.png"], capture_output=True, text=True, cwd=ROOT)
+    (OUT / "trial_detect.log").write_text(r.stdout + r.stderr)
+    print(r.stdout + r.stderr, end="")
+    f = OUT / f"{stem}.json"
+    return r.returncode, (json.loads(f.read_text()) if r.returncode == 0 and f.exists() else None)
+
+
+def run_judge(color, *extra):
+    """前の色(または、動かす前に失敗した色)の判定を、別プロセスで行う。記録先 TRIAL_LOG と、メモ TRIAL_NOTE は、環境変数で引き継がれる。"""
+    subprocess.run([PY, str(ROOT / "scripts" / "judge_real_trial.py"), "--color", color, *extra], cwd=ROOT)
+
+
+def advance(prev, queue, at_rest):
+    """色の切り替え。前の色 prev を運び終えたところで呼ぶ。
+    ① 今の姿勢のまま検出する(at_rest が False のとき)。前の検出で見えていた色が、全部見えなければ(腕が隠している)、休めの姿勢へ戻って、検出し直す。
+    ② その検出を、前の色の「置いたあとの検出」として、前の色を判定する。
+    ③ queue の次の色を、今の姿勢(または休めの姿勢)から計画する。計画できない色は、判定して飛ばす(範囲外は、記録しない)。
+    戻り値: 次の色の計画(辞書)。もう運ぶ色が無ければ None。"""
+    global current, result_judged
+    seen = set(json.loads((OUT / "trial_before.json").read_text())["cubes"])  # 前の検出で見えていた色
+    print("\n=== 次の立方体の検出(" + ("休めの姿勢から" if at_rest else "置いた姿勢のまま") + ")===")
+    rc, data = run_detect("trial_next")
+    if not (rc == 0 and data is not None and seen <= set(data["cubes"])) and not at_rest:
+        print("→ 腕が立方体を隠している(または検出できなかった)。休めの姿勢へ戻って、検出し直す")
+        current = {k: v for k, v in robot.get_observation().items() if k.endswith(".pos")}
+        move_to(robot, current, {**plan["home"], "gripper.pos": current["gripper.pos"]}, max(3.0, plan.get("return_seconds", 8.0) / args.speed))
+        current = {**plan["home"], "gripper.pos": current["gripper.pos"]}
+        at_rest = True
+        time.sleep(2.0)  # 腕が止まって、カメラの前から外れるのを待つ
+        rc, data = run_detect("trial_next")
+    for ext in ("json", "png"):  # この検出を、前の色の「置いたあとの検出」にする(判定が trial_after.* を読む)
+        if (OUT / f"trial_next.{ext}").exists():
+            shutil.copy(OUT / f"trial_next.{ext}", OUT / f"trial_after.{ext}")
+        else:
+            (OUT / f"trial_after.{ext}").unlink(missing_ok=True)
+    print(f"\n--- {prev} の判定 ---")
+    run_judge(prev)
+    result_judged = True
+    while queue:
+        color = queue.pop(0)
+        print(f"\n--- {color} ---")
+        if data is None or color not in data["cubes"]:
+            run_judge(color, "--stage-failed", "detect")
+            continue
+        if data["cubes"][color].get("reach") == "unreachable":  # 肩に近すぎる範囲外(検出の reach 判定。run_real_trial.sh が、最初の色にしているのと同じ)
+            print(f"【飛ばす】{color} は肩に近すぎて届かない範囲外。記録しない")
+            continue
+        for src, dst in (("trial_next.json", "trial_before.json"), ("trial_next.png", "trial_before.png"), ("trial_next.json", "cubes_detected.json")):
+            shutil.copy(OUT / src, OUT / dst)  # plan_pick_test.py は cubes_detected.json、判定は trial_before.json を読む
+        start_args = []
+        if not at_rest:  # 置いた姿勢(今の指令)から、次の真上へ向かう計画にする
+            (OUT / "chain_start.json").write_text(json.dumps(current))
+            start_args = ["--start-from", str(OUT / "chain_start.json")]
+        pr = subprocess.run([PY, str(ROOT / "scripts" / "plan_pick_test.py"), "--color", color, *start_args], cwd=ROOT, env={**os.environ, "MUJOCO_GL": "egl"})
+        if pr.returncode == 4:
+            print(f"【飛ばす】{color} は範囲外(上の「範囲外:」の行が理由)。記録しない")
+            continue
+        if pr.returncode != 0:
+            run_judge(color, "--stage-failed", "neighbor" if pr.returncode == 3 else "plan")
+            continue
+        result_judged = False  # 次の色の結果は、これから
+        return json.loads((OUT / f"pick_plan_{color}.json").read_text())
+    return None
+
+
+
 try:
     start = {k: v for k, v in robot.get_observation().items() if k.endswith(".pos")}
     far = [f"{k.split('.')[0]}: 今 {start[k]:.1f}、想定 {plan['assumed_start'][k]:.1f}" for k in plan["assumed_start"]
@@ -139,73 +247,99 @@ try:
 
     current = dict(start)
     bias_table = load_bias()
-    for i, st in enumerate(stages, start=1):
-        if st["name"][0] in "236" and not args.auto:
-            input(f"\n[{st['name']}] 動かす前の確認(目で見て、問題なければ Enter): ")
-        else:
-            print(f"\n--- {st['name']}")
-        goal = dict(st["cmd"])
-        stage = st["name"][0]
-        arm_stage = stage in "124568"  # 腕が動く段階
-        speed = min(args.speed, 1.5) if stage in "26" else args.speed
-        bias = predicted_bias(bias_table, stage) if (arm_stage and not args.no_feedforward) else {k: 0.0 for k in ARM_KEYS}
-        if arm_stage:
-            sent = {**goal, **{k: goal[k] + bias[k] for k in ARM_KEYS}}  # 補正量を足した指令(足す量が 0 なら goal と同じ)。{**a, **b}: 辞書を合成し、同じキーは後ろが勝つ。[頻度] 定番
-        else:
-            sent = {**goal, **{k: current[k] for k in ARM_KEYS}}  # 指だけ動かす段階(3、7)は、腕を今の指令のままにする(goal に戻すと、足した補正量の分、腕が動いてしまう)
-        if any(abs(v) >= 0.3 for v in bias.values()):
-            print("  先回し: " + ", ".join(f"{k.split('.')[0][:9]} {v:+.1f}°" for k, v in bias.items()))
-        # 速くしすぎないよう、1 回の動きは 0.8 秒以上(持ち上げ・上がる 4、8 は 1.5 秒以上)かける。
-        # 診断(diagnose_vertical_motion.py)の実測: 持ち上げを 0.8 秒で動かすと、サーボが指令に 4° 遅れ、止まる瞬間に 0.35° 行き過ぎて揺れる。1.5 秒以上なら、行き過ぎは 0
-        seconds = args.descent_seconds if (stage in "26" and args.descent_seconds > 0) else max(1.5 if stage in "48" else 0.8, st["seconds"] / speed)
-        arm_moved = True
-        move_to(robot, current, sent, seconds)
-        current = sent
-        obs = wait_settled(robot, args.settle if stage in "1256" else min(args.settle, 0.3))  # 止まったらすぐ次へ(最長は --settle)
-        if stage in "1256":  # 腕が動く段階だけ、関節の読みで補正(指だけ動かす 3、7 と、持ち上げ・上がる 4、8 は、しない)
-            for it in range(args.refine):
-                diff = {k: goal[k] - obs[k] for k in ARM_KEYS}
-                if max(abs(v) for v in diff.values()) < args.refine_tol:
-                    break  # 十分に届いている(先回しが効いていれば、ここで終わる。動きは途切れない)
-                corr = dict(current)
-                for k, v in diff.items():
-                    corr[k] = current[k] + max(-3.0, min(3.0, v))  # 差を、今の指令に足す。一度に 3° まで
-                print("  補正" + str(it + 1) + ": " + ", ".join(f"{k.split('.')[0][:9]} {v:+.1f}°" for k, v in diff.items()))
-                move_to(robot, current, corr, 1.5)
-                current = corr
-                obs = wait_settled(robot, 1.0)
-        if arm_stage and not args.no_feedforward:
-            # この段階で「届いた」指令 = 最後に送った指令 + (目標 − 読み)。これと目標の差が、次回に足す補正量
-            for k in ARM_KEYS:
-                needed = current[k] + (goal[k] - obs[k]) - goal[k]
-                hist = bias_table.setdefault(stage, {}).setdefault(k, [])
-                hist.append(round(needed, 2))
-                del hist[:-BIAS_KEEP]  # 古いものから捨てて、直近 BIAS_KEEP 個だけ残す。[頻度] 定番のスライス
-            BIAS_FILE.parent.mkdir(exist_ok=True)
-            BIAS_FILE.write_text(json.dumps(bias_table, indent=1))
-        last = i
-        obs = robot.get_observation()
-        if args.record and st["name"][0] in "123":
-            (ROOT / "outputs" / "real_joints.json").write_text(json.dumps(
-                {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "joints": {n: float(obs[f"{n}.pos"]) for n in JOINTS}}, ensure_ascii=False, indent=2))
-            r = subprocess.run([str(ROOT / ".venv" / "bin" / "python"), str(ROOT / "scripts" / "record_hand_sample.py"),
-                                "--label", f"{plan['tag']}_{st['name'][0]}", "--joints-file-only", "--detect-cube", args.color], capture_output=True, text=True)  # 別プロセスで、撮影と記録を行う
-            print("  記録: " + (r.stdout.strip() or r.stderr.strip()).splitlines()[-1])
-        print("  関節の読み: " + ", ".join(f"{n[:6]} {obs[n + '.pos']:.1f}" for n in JOINTS))
-        if st["name"][0] in "124568":  # 腕が動いた段階: 指令に届いているか(机や物に当たって止まっていないか)
-            err = max(abs(st["cmd"][k] - obs[k]) for k in ARM_KEYS)
-            max_joint_err = max(max_joint_err, err)
-            if args.auto and err > args.max_joint_err:
-                raise TrialAbort(f"joint_error: 段階 {st['name'][0]} で、関節の読みが指令から {err:.1f}° ずれている(上限 {args.max_joint_err}°)")
-        if st["name"][0] == "3":
-            grip_after_close = float(obs["gripper.pos"])
-            floor = plan.get("gripper_empty", plan["gripper_close"]) + args.grasp_margin  # plan.get(キー, 既定値): キーが無ければ既定値を返す(古い計画ファイル向け)。[頻度] 定番
-            if args.auto and grip_after_close > args.grasp_max:
-                raise TrialAbort(f"grasp_wide: 指の読み {grip_after_close:.1f} が {args.grasp_max:.1f} を超えた。立方体を角などで挟んでいる(向きの推定が外れた疑い)。持ち上げない")
-            if args.auto and grip_after_close < floor:
-                raise TrialAbort(f"grasp_missed: 指の読み {grip_after_close:.1f} が閉じ切りに近い(空で閉じた読み + 余裕 = {floor:.1f} 未満)。何も掴めていない")
-        if (i == args.until or st["name"][0] in "237") and not args.auto:
-            input("  目で見て、様子(位置・立方体・指)を確認したら Enter: ")
+    chain_queue = list(args.then)  # 連続仕分けで、このあと運ぶ色(無ければ空 = 1 色だけ。従来どおり)
+    while True:  # 1 色ぶんの繰り返し。--then が無ければ、1 回で終わる
+        aborted = False
+        try:
+            for i, st in enumerate(stages, start=1):
+                if st["name"][0] in "236" and not args.auto:
+                    input(f"\n[{st['name']}] 動かす前の確認(目で見て、問題なければ Enter): ")
+                else:
+                    print(f"\n--- {st['name']}")
+                goal = dict(st["cmd"])
+                stage = st["name"][0]
+                arm_stage = stage in "124568"  # 腕が動く段階
+                speed = min(args.speed, 1.5) if stage in "26" else args.speed
+                bias = predicted_bias(bias_table, stage) if (arm_stage and not args.no_feedforward) else {k: 0.0 for k in ARM_KEYS}
+                if arm_stage:
+                    sent = {**goal, **{k: goal[k] + bias[k] for k in ARM_KEYS}}  # 補正量を足した指令(足す量が 0 なら goal と同じ)。{**a, **b}: 辞書を合成し、同じキーは後ろが勝つ。[頻度] 定番
+                else:
+                    sent = {**goal, **{k: current[k] for k in ARM_KEYS}}  # 指だけ動かす段階(3、7)は、腕を今の指令のままにする(goal に戻すと、足した補正量の分、腕が動いてしまう)
+                if any(abs(v) >= 0.3 for v in bias.values()):
+                    print("  先回し: " + ", ".join(f"{k.split('.')[0][:9]} {v:+.1f}°" for k, v in bias.items()))
+                # 速くしすぎないよう、1 回の動きは 0.8 秒以上(持ち上げ・上がる 4、8 は 1.5 秒以上)かける。
+                # 診断(diagnose_vertical_motion.py)の実測: 持ち上げを 0.8 秒で動かすと、サーボが指令に 4° 遅れ、止まる瞬間に 0.35° 行き過ぎて揺れる。1.5 秒以上なら、行き過ぎは 0
+                seconds = args.descent_seconds if (stage in "26" and args.descent_seconds > 0) else max(1.5 if stage in "48" else 0.8, st["seconds"] / speed)
+                arm_moved = True
+                move_to(robot, current, sent, seconds)
+                current = sent
+                obs = wait_settled(robot, args.settle if stage in "1256" else min(args.settle, 0.3))  # 止まったらすぐ次へ(最長は --settle)
+                if stage in "1256":  # 腕が動く段階だけ、関節の読みで補正(指だけ動かす 3、7 と、持ち上げ・上がる 4、8 は、しない)
+                    for it in range(args.refine):
+                        diff = {k: goal[k] - obs[k] for k in ARM_KEYS}
+                        if max(abs(v) for v in diff.values()) < args.refine_tol:
+                            break  # 十分に届いている(先回しが効いていれば、ここで終わる。動きは途切れない)
+                        corr = dict(current)
+                        for k, v in diff.items():
+                            corr[k] = current[k] + max(-3.0, min(3.0, v))  # 差を、今の指令に足す。一度に 3° まで
+                        print("  補正" + str(it + 1) + ": " + ", ".join(f"{k.split('.')[0][:9]} {v:+.1f}°" for k, v in diff.items()))
+                        move_to(robot, current, corr, 1.5)
+                        current = corr
+                        obs = wait_settled(robot, 1.0)
+                if arm_stage and not args.no_feedforward:
+                    # この段階で「届いた」指令 = 最後に送った指令 + (目標 − 読み)。これと目標の差が、次回に足す補正量
+                    for k in ARM_KEYS:
+                        needed = current[k] + (goal[k] - obs[k]) - goal[k]
+                        hist = bias_table.setdefault(stage, {}).setdefault(k, [])
+                        hist.append(round(needed, 2))
+                        del hist[:-BIAS_KEEP]  # 古いものから捨てて、直近 BIAS_KEEP 個だけ残す。[頻度] 定番のスライス
+                    BIAS_FILE.parent.mkdir(exist_ok=True)
+                    BIAS_FILE.write_text(json.dumps(bias_table, indent=1))
+                last = i
+                obs = robot.get_observation()
+                if args.record and st["name"][0] in "123":
+                    (ROOT / "outputs" / "real_joints.json").write_text(json.dumps(
+                        {"time": time.strftime("%Y-%m-%d %H:%M:%S"), "joints": {n: float(obs[f"{n}.pos"]) for n in JOINTS}}, ensure_ascii=False, indent=2))
+                    r = subprocess.run([str(ROOT / ".venv" / "bin" / "python"), str(ROOT / "scripts" / "record_hand_sample.py"),
+                                        "--label", f"{plan['tag']}_{st['name'][0]}", "--joints-file-only", "--detect-cube", args.color], capture_output=True, text=True)  # 別プロセスで、撮影と記録を行う
+                    print("  記録: " + (r.stdout.strip() or r.stderr.strip()).splitlines()[-1])
+                print("  関節の読み: " + ", ".join(f"{n[:6]} {obs[n + '.pos']:.1f}" for n in JOINTS))
+                if st["name"][0] in "124568":  # 腕が動いた段階: 指令に届いているか(机や物に当たって止まっていないか)
+                    err = max(abs(st["cmd"][k] - obs[k]) for k in ARM_KEYS)
+                    max_joint_err = max(max_joint_err, err)
+                    if args.auto and err > args.max_joint_err:
+                        raise TrialAbort(f"joint_error: 段階 {st['name'][0]} で、関節の読みが指令から {err:.1f}° ずれている(上限 {args.max_joint_err}°)")
+                if st["name"][0] == "3":
+                    grip_after_close = float(obs["gripper.pos"])
+                    floor = plan.get("gripper_empty", plan["gripper_close"]) + args.grasp_margin  # plan.get(キー, 既定値): キーが無ければ既定値を返す(古い計画ファイル向け)。[頻度] 定番
+                    if args.auto and grip_after_close > args.grasp_max:
+                        raise TrialAbort(f"grasp_wide: 指の読み {grip_after_close:.1f} が {args.grasp_max:.1f} を超えた。立方体を角などで挟んでいる(向きの推定が外れた疑い)。持ち上げない")
+                    if args.auto and grip_after_close < floor:
+                        raise TrialAbort(f"grasp_missed: 指の読み {grip_after_close:.1f} が閉じ切りに近い(空で閉じた読み + 余裕 = {floor:.1f} 未満)。何も掴めていない")
+                if (i == args.until or st["name"][0] in "237") and not args.auto:
+                    input("  目で見て、様子(位置・立方体・指)を確認したら Enter: ")
+        except TrialAbort as e:
+            abort_reason = str(e)
+            print(f"\n中止: {abort_reason}\n真上へ戻って、休めの姿勢へ戻る")
+            aborted = True
+        if not chain_queue:
+            break  # 1 色だけ、または、最後の色。休めの姿勢へ戻る後始末は、下の finally
+        # --- 色の切り替え: 休めの姿勢へ戻らず、置いた姿勢から次の色へ(中止したときだけ、戻ってから) ---
+        if aborted:
+            recover_to_rest()
+        write_result()
+        nxt = advance(plan["color"], chain_queue, at_rest=aborted)
+        if nxt is None:  # もう運ぶ色が無い
+            if aborted:
+                last = 0  # すでに休めの姿勢にいる。finally で、もう一度「真上を経由」して動かないように
+            break
+        plan, stages = nxt, nxt["stages"][:args.until]
+        last, arm_moved, abort_reason, grip_after_close, max_joint_err = 0, False, None, None, 0.0
+        t_start = time.time()
+        print("\n=== 次の色: " + plan["tag"] + "(立方体 (" + f'{plan["cube"]["x_m"] * 1000:.0f}, {plan["cube"]["y_m"] * 1000:.0f}) mm)===')
+        print(f"{'段階':28s}" + "".join(f"{n[:6]:>7s}" for n in JOINTS) + "  秒")
+        for st in stages:
+            print(f"{st['name']:24s}" + "".join(f"{st['cmd'][n + '.pos']:7.1f}" for n in JOINTS) + f"  {st['seconds']:.1f}")
 except TrialAbort as e:
     abort_reason = str(e)
     print(f"\n中止: {abort_reason}\n真上へ戻って、休めの姿勢へ戻る")
@@ -216,25 +350,10 @@ finally:
     # 終了: 真上の姿勢(段階 1 か 5)を経由して、休めの姿勢へ戻り、腕を支えてもらってから、トルクを切る。
     try:
         try:
-            if current is not None:
-                current = {k: v for k, v in robot.get_observation().items() if k.endswith(".pos")}  # 途中で中断したときのため、今の実際の姿勢から動かす
-                via = plan["stages"][4 if last >= 5 else 0]["cmd"]
-                if last >= 2:  # 降下した後は、まず真上へ(指の状態はそのまま)
-                    up = {**via, "gripper.pos": current["gripper.pos"]}
-                    move_to(robot, current, up, 3.0)
-                    current = up
-                    if current["gripper.pos"] < plan["gripper_open"] - 5:  # 立方体を掴んだまま(指が閉じている)なら、真上で放す(5 cm ほどの高さ。休めの姿勢へ畳むと、立方体を挟みつぶすため)
-                        if not args.auto:
-                            input("\n立方体を掴んだままです。真上で放します。下に手などが無いことを確認したら Enter: ")
-                        opened = {**current, "gripper.pos": plan["gripper_open"]}
-                        move_to(robot, current, opened, 1.5)
-                        current = opened
-                move_to(robot, current, {**plan["home"], "gripper.pos": current["gripper.pos"]}, max(3.0, plan.get("return_seconds", 8.0) / args.speed))  # 戻りも --speed に従う(ただし 3 秒以上)
+            recover_to_rest()
         except NameError:  # current が未定義(接続直後の失敗)のとき
             pass
-        (ROOT / "outputs" / "real_trial_result.json").write_text(json.dumps(  # 試験の判定(judge_real_trial.py)が読む
-            {"tag": plan["tag"], "time": time.strftime("%Y-%m-%d %H:%M:%S"), "last_stage": last, "total_stages": len(plan["stages"]), "arm_moved": arm_moved, "abort_reason": abort_reason,
-             "grip_after_close": grip_after_close, "max_joint_err_deg": round(max_joint_err, 2), "cycle_s": round(time.time() - t_start, 1)}, ensure_ascii=False, indent=2))
+        write_result()
         if not args.auto or args.confirm_end:
             input("\n腕を支えたら Enter(このあとトルクが切れて、腕は落ちる): ")
     except (KeyboardInterrupt, EOFError):

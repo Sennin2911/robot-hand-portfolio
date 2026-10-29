@@ -51,5 +51,17 @@ if [ $RC -eq 2 ]; then  # 2 = 引数の間違い(argparse の決まりの終了�
 fi
 
 sleep 2  # 腕が止まって、カメラの前から外れるのを待つ
-.venv/bin/python scripts/detect_cubes_world.py --out-json trial_after.json --out-png trial_after.png
-.venv/bin/python scripts/judge_real_trial.py --color "$COLOR"
+# 連続仕分け(--then)のとき、運んだ最後の色は、「結果ファイルの tag(PICK_色)」の色。最後の色が、切り替えのときにすでに判定済み(judged が true)なら、判定を飛ばす。
+# 結果ファイルが無いとき(腕が動かなかった)は、$COLOR のまま。出力は「色 judged か」の 2 語(read で、2 つの変数に分けて受け取る)
+read JUDGE_COLOR JUDGED < <(.venv/bin/python -c "
+import json
+try:
+    d = json.load(open('outputs/real_trial_result.json')); print(d['tag'].replace('PICK_', ''), 'yes' if d.get('judged') else 'no')
+except Exception:
+    print('$COLOR no')")
+if [ "$JUDGED" = "yes" ]; then
+    echo "(最後の色は、切り替えのときに判定済み)"
+else
+    .venv/bin/python scripts/detect_cubes_world.py --out-json trial_after.json --out-png trial_after.png
+    .venv/bin/python scripts/judge_real_trial.py --color "$JUDGE_COLOR"
+fi
