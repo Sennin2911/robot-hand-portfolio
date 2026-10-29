@@ -30,6 +30,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--color", required=True, choices=["red", "green", "blue"])
 parser.add_argument("--until", type=int, default=8, help="この段階までで止める(1〜8)")
 parser.add_argument("--refine", type=int, default=0, help="関節の読みによる補正の回数(動いたあと、読みと指令の差を指令に足す)。0 = しない")
+parser.add_argument("--descent-seconds", type=float, default=1.0,
+                    help="降下(段階 2、6)にかける秒数。遅い降下(約 4 秒)は、遊びのところで止まっては動く振動が出た。診断(diagnose_vertical_motion.py)の目視で、4.0 / 2.5 / 1.5 / 1.0 秒のうち 1.0 秒が最も振動が少なかった。"
+                         "慎重にしたいとき(最初の確認など)は大きくする。0 以下なら、従来の「計画の秒数 ÷ min(--speed, 1.5)」")
 parser.add_argument("--arm-p", type=int, default=24, help="腕の 5 関節のサーボの P_Coefficient(位置の追従の強さ)。LeRobot の既定は 16。降下の振動を目で比べて決めた(P 10 は悪化、24 が最良、32 は jerk が増えた)。16 にすると既定のまま")
 parser.add_argument("--arm-d", type=int, default=64, help="腕の 5 関節のサーボの D_Coefficient(揺れを抑える成分)。LeRobot の既定は 32。64 で降下の振動が減った")
 parser.add_argument("--no-feedforward", action="store_true",
@@ -149,7 +152,8 @@ try:
             print("  先回し: " + ", ".join(f"{k.split('.')[0][:9]} {v:+.1f}°" for k, v in bias.items()))
         # 速くしすぎないよう、1 回の動きは 0.8 秒以上(持ち上げ・上がる 4、8 は 1.5 秒以上)かける。
         # 診断(diagnose_vertical_motion.py)の実測: 持ち上げを 0.8 秒で動かすと、サーボが指令に 4° 遅れ、止まる瞬間に 0.35° 行き過ぎて揺れる。1.5 秒以上なら、行き過ぎは 0
-        move_to(robot, current, sent, max(1.5 if stage in "48" else 0.8, st["seconds"] / speed))
+        seconds = args.descent_seconds if (stage in "26" and args.descent_seconds > 0) else max(1.5 if stage in "48" else 0.8, st["seconds"] / speed)
+        move_to(robot, current, sent, seconds)
         current = sent
         obs = wait_settled(robot, args.settle if stage in "1256" else min(args.settle, 0.3))  # 止まったらすぐ次へ(最長は --settle)
         if stage in "1256":  # 腕が動く段階だけ、関節の読みで補正(指だけ動かす 3、7 と、持ち上げ・上がる 4、8 は、しない)
