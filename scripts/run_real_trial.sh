@@ -34,8 +34,8 @@ fi
 cp outputs/trial_before.json outputs/cubes_detected.json 2>/dev/null  # plan_pick_test.py は、この名前のファイルを読む。 (立方体が 1 つも見つからなければファイルが無く、cp は失敗するが、次の plan_pick_test.py が「検出結果が無い」で止まる)
 MUJOCO_GL=egl .venv/bin/python scripts/plan_pick_test.py --color "$COLOR"
 RC=$?  # 直前のコマンドの終了コード(0 = 成功、3 = 隣の立方体が近すぎて、どの向きでも掴めない、その他 = 届かないなど)
-if [ $RC -eq 4 ]; then  # IK が解けない = 範囲外。検出のときの reach 判定と同じ扱い(動かさず、記録もしない)
-    echo "【中止】$COLOR の立方体は、この位置では IK が解けない範囲外です(肩に近すぎる、または色ごとの置き場との組み合わせ)。置き直してください。腕は動かしていません。記録もしていません。"
+if [ $RC -eq 4 ]; then  # 範囲外(IK が解けない、遠すぎる、可動域の端、机に近い経路)。検出のときの reach 判定と同じ扱い(動かさず、記録もしない)
+    echo "【中止】$COLOR の立方体は、この位置では計画が作れない範囲外です(肩に近すぎる・遠すぎる、可動域の端、色ごとの置き場との組み合わせなど。上の「範囲外:」の行が理由)。置き直してください。腕は動かしていません。記録もしていません。"
     exit 1
 fi
 if [ $RC -ne 0 ]; then

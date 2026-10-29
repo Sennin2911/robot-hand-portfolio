@@ -55,7 +55,8 @@ if cube.get("yaw_iou", 1.0) < 0.5:  # dict.get(キー, 既定値): キーが無�
 r_cube = float(np.hypot(cube["x_m"] - AXIS[0], cube["y_m"] - AXIS[1]))
 print(f"{args.color}: 位置 ({cube['x_m'] * 1000:.0f}, {cube['y_m'] * 1000:.0f}) mm、肩の軸から {r_cube * 100:.1f} cm、向き {cube['yaw_deg']:.0f}°")
 if r_cube > 0.23:
-    sys.exit("肩の軸から 23 cm より遠い。手を真下に向けて届かない可能性が高いので、立方体をロボットに近づけて、検出し直す")
+    print("範囲外: 肩の軸から 23 cm より遠い。手を真下に向けて届かない可能性が高いので、立方体をロボットに近づけて、検出し直す")
+    sys.exit(4)  # 4 = 範囲外(動かす前に止める。run_real_trial.sh は記録しない)
 
 err = np.array(args.hand_error) * 1e-3  # 手先 − 目標 のずれ [m]。目標からこの分を引けば、手先が本来の位置に来る(ずれが同じ向き・大きさで出る前提)
 if err.any():
@@ -128,7 +129,8 @@ for name, pose, grip in stages:
         cmd["gripper.pos"] = REAL_GRIP_CLOSE  # 閉じる指令は、実測した値に置き換える
     bad = [n for n in LIM if abs(cmd[f"{n}.pos"]) > LIM[n] - MARGIN]
     if bad:
-        sys.exit(f"段階 {name}: {bad} が可動域の端に近い({[round(cmd[f'{n}.pos'], 1) for n in bad]})。計画を作りません")
+        print(f"範囲外: 段階 {name}: {bad} が可動域の端に近い({[round(cmd[f'{n}.pos'], 1) for n in bad]})。計画を作りません")
+        sys.exit(4)
     plan["stages"].append({"name": name, "pose": pose, "cmd": cmd})
 
 GEOMS = [g for g in range(model.ngeom) if model.geom_type[g] == mujoco.mjtGeom.mjGEOM_MESH and model.geom_group[g] == 2 and model.geom_bodyid[g] >= 3]
@@ -167,7 +169,8 @@ for label, a, b in chk:
     ok_all &= ok
     print(f"経路 {label}: 腕の最低の高さ {c * 1000:.0f} mm(出発点 {c0 * 1000:.0f} mm) {'OK' if ok else '危ない'}")
 if not ok_all:
-    sys.exit("机に近い経路がある。計画を作りません")
+    print("範囲外: 机に近い経路がある。計画を作りません")
+    sys.exit(4)
 prev = REST
 for st in plan["stages"]:
     st["seconds"] = 6.0 if st["name"][0] in "26" else (1.5 if st["name"][0] in "37" else seconds_between(prev, st["cmd"]))
