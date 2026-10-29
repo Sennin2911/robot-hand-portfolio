@@ -37,9 +37,9 @@ parser.add_argument("--auto", action="store_true",
                          "目で見る代わりに、安全装置が働く: 関節の読みが指令から --max-joint-err 度以上ずれたら、指を閉じたあとに何も掴めていなければ、真上へ戻って中止する。結果は outputs/real_trial_result.json")
 parser.add_argument("--confirm-end", action="store_true", help="--auto のとき、終了時の「腕を支えたら Enter(トルクが切れて腕が落ちる)」を残す(慣れるまでの最初の数回向け)")
 parser.add_argument("--max-joint-err", type=float, default=5.0, help="--auto の安全装置。腕が動く段階のあと、関節の読みと指令の差がこれ(度)を超えたら中止する")
-parser.add_argument("--grasp-margin", type=float, default=0.8,
-                    help="--auto の安全装置。指を閉じたあとの指の読みが「閉じる指令 + この値」未満なら、何も掴めていない(指が閉じ切った)とみなして中止する。"
-                         "立方体を掴んだ実測は、閉じる指令より 1.6 ほど大きい(5.5 など)")
+parser.add_argument("--grasp-margin", type=float, default=3.0,
+                    help="--auto の安全装置。指を閉じたあとの指の読みが「空で閉じ切った読み + この値」未満なら、何も掴めていないとみなして中止する。"
+                         "クッション付きの実測: 空で閉じ切り 9.4、立方体を掴むと約 20〜22(計画に gripper_empty が無いときは、閉じる指令 + この値)")
 parser.add_argument("--speed", type=float, default=1.0, help="動かす速さの倍率(2 なら、計画の秒数の半分で動かす)。降下(2、6)は、安全のため 1.5 倍までに抑える")
 parser.add_argument("--settle", type=float, default=1.0, help="動いたあと、止まるのを待つ秒数")
 args = parser.parse_args()
@@ -123,8 +123,9 @@ try:
                 raise TrialAbort(f"joint_error: 段階 {st['name'][0]} で、関節の読みが指令から {err:.1f}° ずれている(上限 {args.max_joint_err}°)")
         if st["name"][0] == "3":
             grip_after_close = float(obs["gripper.pos"])
-            if args.auto and grip_after_close < plan["gripper_close"] + args.grasp_margin:
-                raise TrialAbort(f"grasp_missed: 指の読み {grip_after_close:.1f} が閉じ切りに近い(閉じる指令 {plan['gripper_close']:.1f})。何も掴めていない")
+            floor = plan.get("gripper_empty", plan["gripper_close"]) + args.grasp_margin  # plan.get(キー, 既定値): キーが無ければ既定値を返す(古い計画ファイル向け)。[頻度] 定番
+            if args.auto and grip_after_close < floor:
+                raise TrialAbort(f"grasp_missed: 指の読み {grip_after_close:.1f} が閉じ切りに近い(空で閉じた読み + 余裕 = {floor:.1f} 未満)。何も掴めていない")
         if (i == args.until or st["name"][0] in "237") and not args.auto:
             input("  目で見て、様子(位置・立方体・指)を確認したら Enter: ")
 except TrialAbort as e:

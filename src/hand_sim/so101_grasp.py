@@ -172,11 +172,14 @@ def grasp_site_pose(cube_pos, yaw, in_site=CUBE_IN_SITE):
     return pos, R
 
 
-def plan_pick_place(model, cube_pos, place_xy, yaw=0.0, q_init=(0, -1.7, 1.6, 1.0, 0), site_offset=(0.0, 0.0, 0.0)):
+def plan_pick_place(model, cube_pos, place_xy, yaw=0.0, q_init=(0, -1.7, 1.6, 1.0, 0), site_offset=(0.0, 0.0, 0.0), hold_offset=(0.0, 0.0, 0.0)):
     """掴む → 置く の途中の姿勢(関節角 5 つ)を、IK で全部求めて辞書で返す。解けなかった姿勢の名前は、例外で知らせる。
 
     site_offset: 実機の指の面の位置が sim と違うぶん [m]。手の座標(gripperframe の x, y, z)で、CUBE_IN_SITE と CUBE_IN_HAND の両方に足す
       (指に対する立方体の位置を、そのぶんずらす)。実機で掴んだ立方体の位置から求めた値(grasp_calibration.py)を渡す。既定は 0(sim どおり)。
+
+    hold_offset: 「掴んだあと」(CUBE_IN_HAND)にだけ足すずれ [m]。指のクッションは、固定側の面を動く側へ押し出す(厚み − つぶれ)ので、
+      掴んだ立方体は sim より動く側に寄る。掴む前の位置(CUBE_IN_SITE)に足すと、開いた指の動く側に近づきすぎるので、別にしてある。
 
     返す姿勢: above(立方体の真上)、grasp(掴む)、place_above(置き場の真上)、place(置く)。
     前の姿勢の解を、次の IK の出発点にする(近い姿勢から探すと、関節が急に大きく動く別の解に飛びにくい)。
@@ -200,7 +203,7 @@ def plan_pick_place(model, cube_pos, place_xy, yaw=0.0, q_init=(0, -1.7, 1.6, 1.
     # 先に「低い姿勢(掴む・置く)」を解き、その解を出発点にして「真上の姿勢」を解く。
     # 真上の姿勢は、折りたたんだ姿勢から遠く、そこから直接だと解けないことがある。低い姿勢のほうが、手が向きを作りやすい。
     # 掴む前(grasp、above)は立方体が CUBE_IN_SITE にあり、掴んだあと(place、place_above)は CUBE_IN_HAND にある。
-    in_site, in_hand = CUBE_IN_SITE + site_offset, CUBE_IN_HAND + site_offset
+    in_site, in_hand = CUBE_IN_SITE + site_offset, CUBE_IN_HAND + site_offset + np.asarray(hold_offset, dtype=float)
     solve("grasp", cube_pos, in_site)
     solve("above", cube_pos + [0, 0, HOVER], in_site)
     solve("place", place_pos, in_hand)
@@ -212,7 +215,7 @@ class NeighborCollision(ValueError):
     """IK が解ける向きは有るが、どの向きでも、開いた指が隣の立方体にぶつかるときに投げる。(ValueError の仲間にして、既存の except ValueError でも受けられる)"""
 
 
-def plan_for_cube(model, cube_pos, place_xy, cube_yaw=0.0, site_offset=(0.0, 0.0, 0.0), neighbors=(), info=None):
+def plan_for_cube(model, cube_pos, place_xy, cube_yaw=0.0, site_offset=(0.0, 0.0, 0.0), neighbors=(), info=None, hold_offset=(0.0, 0.0, 0.0)):
     """立方体が机の上で cube_yaw [rad] だけ回っているとき、指を立方体の面に合わせた掴み方を探して、(姿勢の辞書, 指の向き yaw) を返す。
 
     指の開閉の向きは、立方体の面に垂直でないと、角(かど)に当たって立方体が回ってしまう。
@@ -221,6 +224,7 @@ def plan_for_cube(model, cube_pos, place_xy, cube_yaw=0.0, site_offset=(0.0, 0.0
 
     neighbors: 隣にある、ほかの立方体 [(x [m], y [m], yaw [rad]), ...]。指定すると、開いた指が隣にぶつかる向きは飛ばして、次の候補を使う
       (grasp_clearance.py。手の向きは 90° ごとに 4 通りあり、指の開閉の向きに隣が無い向きを選ぶ)。どの向きでもぶつかるなら NeighborCollision。
+    hold_offset: plan_pick_place と同じ(掴んだあとの位置だけのずれ。クッション用)。
     info: 辞書を渡すと、選んだ経過を書き込む({"skipped": 飛ばした向きの数, "clearance_mm": 選んだ向きの、隣との距離})。呼び出し側が、記録や表示に使う。
     """
     from hand_sim.grasp_clearance import collides  # 隣を調べるときだけ使うので、ここで import する(sim 側の読み込みを軽く保つ)
@@ -235,7 +239,7 @@ def plan_for_cube(model, cube_pos, place_xy, cube_yaw=0.0, site_offset=(0.0, 0.0
             continue
         tried.add(key)
         try:
-            poses = plan_pick_place(model, cube_pos, place_xy, yaw, site_offset=site_offset)
+            poses = plan_pick_place(model, cube_pos, place_xy, yaw, site_offset=site_offset, hold_offset=hold_offset)
         except ValueError:  # IK が解けなかった。次の候補へ
             continue
         solved_any = True

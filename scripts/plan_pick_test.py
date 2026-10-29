@@ -55,6 +55,14 @@ if r_cube > 0.23:
 err = np.array(args.hand_error) * 1e-3  # 手先 − 目標 のずれ [m]。目標からこの分を引けば、手先が本来の位置に来る(ずれが同じ向き・大きさで出る前提)
 if err.any():
     print(f"手先のずれの補正: 目標を ({-err[0] * 1000:+.1f}, {-err[1] * 1000:+.1f}) mm ずらして計画する")
+# --- 指のクッション(2026-10-29。厚み 約 8 mm ×2 本、立方体を挟むと 2〜3 mm へこむ)に合わせた値 ---
+# 指の読み(0〜100)の実測。手で動かして読んだ: 全開 99.9、空で閉じ切り(クッション同士が触れる)9.4、立方体に触れた(力なし)21.9。
+# 閉じる指令は、sim の GRIP_CLOSE からの換算(3.9。クッション無しの指向け)ではなく、触れた読みよりスポンジのへこみ分(2.5 mm ÷ 約 1.8 mm/読み ≒ 1.5〜2)深くした値。
+# サーボの力は「読み − 指令」に比例するので、深すぎるとクッションを潰し切ってモーターに無理がかかる。
+REAL_GRIP_CLOSE = 20.0
+REAL_GRIP_EMPTY = 9.4  # 空で閉じ切った読み。何も掴めなかったかの判定(real_pick_place.py)に使う
+# 掴んだ立方体の位置のずれ(手の座標 [m])。固定側のクッションの面が、厚み 8 mm 動く側へ寄り、挟んで 2.5 mm へこむので、立方体は動く側へ +5.5 mm 寄る。
+HOLD_OFFSET = np.array([0.0, 0.0, 0.0055])
 site_offset = load_site_offset()  # 実機で掴んだときの測定から貯めた、指の面のずれ(手の座標 [m])。まだ測定が無ければ 0(update_grasp_offset.py が貯める)
 if site_offset.any():
     print(f"掴みの校正(実機で掴んだ測定の中央値): 手の座標 z を {site_offset[2] * 1000:+.1f} mm ずらして計画する")
@@ -63,7 +71,7 @@ neighbors = [(d["x_m"], d["y_m"], np.radians(d["yaw_deg"])) for c, d in det.item
 info = {}
 try:
     poses, hand_yaw = plan_for_cube(model, np.array([cube["x_m"] - err[0], cube["y_m"] - err[1], CUBE_M / 2]), np.array(PADS[args.color]) - err, np.radians(cube["yaw_deg"]),
-                                    site_offset=site_offset, neighbors=neighbors, info=info)
+                                    site_offset=site_offset, neighbors=neighbors, info=info, hold_offset=HOLD_OFFSET)
 except NeighborCollision as e:
     # 終了コード 3 = 隣の立方体が近すぎて、どの向きでも掴めない(run_real_trial.sh が、失敗の分類「隣接」にする)。1 は、その他の失敗
     print(f"掴めない: {e}。隣の立方体を、離して置き直す")
@@ -81,7 +89,7 @@ def real_cmd(q5, grip_rad):
     return {k: float(v) for k, v in act.items()}
 
 
-G_OPEN, G_CLOSE = real_cmd(poses["grasp"], GRIP_OPEN)["gripper.pos"], real_cmd(poses["grasp"], GRIP_CLOSE)["gripper.pos"]
+G_OPEN, G_CLOSE = real_cmd(poses["grasp"], GRIP_OPEN)["gripper.pos"], REAL_GRIP_CLOSE
 stages = [
     ("1 立方体の真上へ(指を開く)", "above", GRIP_OPEN),
     ("2 降下", "grasp", GRIP_OPEN),
@@ -94,9 +102,11 @@ stages = [
 ]
 plan = {"neighbors": [[round(x, 4), round(y, 4)] for x, y, _ in neighbors], "avoided_neighbor": bool(info.get("skipped")), "neighbor_clearance_mm": info.get("clearance_mm"),
         "tag": f"PICK_{args.color}", "assumed_start": REST, "home": REST, "color": args.color, "cube": cube, "hand_yaw_deg": float(np.degrees(hand_yaw)),
-        "gripper_open": G_OPEN, "gripper_close": G_CLOSE, "stages": []}
+        "gripper_open": G_OPEN, "gripper_close": G_CLOSE, "gripper_empty": REAL_GRIP_EMPTY, "stages": []}
 for name, pose, grip in stages:
     cmd = real_cmd(poses[pose], grip)
+    if grip == GRIP_CLOSE:
+        cmd["gripper.pos"] = REAL_GRIP_CLOSE  # 閉じる指令は、実測した値に置き換える
     bad = [n for n in LIM if abs(cmd[f"{n}.pos"]) > LIM[n] - MARGIN]
     if bad:
         sys.exit(f"段階 {name}: {bad} が可動域の端に近い({[round(cmd[f'{n}.pos'], 1) for n in bad]})。計画を作りません")
