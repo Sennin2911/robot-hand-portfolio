@@ -81,7 +81,7 @@ def classify(color):
     extra["moved_others_mm"] = round(moved, 1)
     extra["contact"] = contact_level(moved)
 
-    if reason and reason.startswith("grasp_missed"):
+    if reason and reason.startswith(("grasp_missed", "grasp_wide")):  # startswith(タプル): どれかで始まれば True。grasp_wide = 角などで挟んだ(幅が広い)
         return False, "把持失敗", reason, extra
     if reason:
         return False, "安全停止", reason, extra

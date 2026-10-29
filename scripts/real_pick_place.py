@@ -50,6 +50,9 @@ parser.add_argument("--max-joint-err", type=float, default=5.0, help="--auto の
 parser.add_argument("--grasp-margin", type=float, default=3.0,
                     help="--auto の安全装置。指を閉じたあとの指の読みが「空で閉じ切った読み + この値」未満なら、何も掴めていないとみなして中止する。"
                          "クッション付きの実測: 空で閉じ切り 9.4、立方体を掴むと約 20〜22(計画に gripper_empty が無いときは、閉じる指令 + この値)")
+parser.add_argument("--grasp-max", type=float, default=25.0,
+                    help="--auto の安全装置。指を閉じたあとの指の読みがこれを超えたら、立方体を面ではなく角などで挟んでいる(幅が広い)とみなし、持ち上げずに中止する。"
+                         "面で挟んだ実測は 20.2〜22.1(30 mm)。読み 1 あたり約 1.8 mm なので、25 は幅 約 35 mm に相当。対角(42 mm)なら約 28.6。立方体の大きさを変えたら、この値も変える")
 parser.add_argument("--speed", type=float, default=1.0, help="動かす速さの倍率(2 なら、計画の秒数の半分で動かす)。降下(2、6)は、安全のため 1.5 倍までに抑える")
 parser.add_argument("--settle", type=float, default=1.0, help="動いたあと、止まるのを待つ秒数")
 args = parser.parse_args()
@@ -195,6 +198,8 @@ try:
         if st["name"][0] == "3":
             grip_after_close = float(obs["gripper.pos"])
             floor = plan.get("gripper_empty", plan["gripper_close"]) + args.grasp_margin  # plan.get(キー, 既定値): キーが無ければ既定値を返す(古い計画ファイル向け)。[頻度] 定番
+            if args.auto and grip_after_close > args.grasp_max:
+                raise TrialAbort(f"grasp_wide: 指の読み {grip_after_close:.1f} が {args.grasp_max:.1f} を超えた。立方体を角などで挟んでいる(向きの推定が外れた疑い)。持ち上げない")
             if args.auto and grip_after_close < floor:
                 raise TrialAbort(f"grasp_missed: 指の読み {grip_after_close:.1f} が閉じ切りに近い(空で閉じた読み + 余裕 = {floor:.1f} 未満)。何も掴めていない")
         if (i == args.until or st["name"][0] in "237") and not args.auto:
