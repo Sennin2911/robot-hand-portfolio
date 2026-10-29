@@ -124,6 +124,8 @@ class TrialAbort(Exception):
 
 PY = str(ROOT / ".venv" / "bin" / "python")  # 検出・計画・判定は、LeRobot の環境ではなく、プロジェクトの環境(.venv)で動かす(mujoco などがあるため)
 OUT = ROOT / "outputs"
+IOU_MIN_NEXT = 0.5  # 次の色の、形の当てはめの IoU の下限。これ未満は「腕が一部を隠している」とみなして、休めの姿勢で検出し直す(試験 5、8、15 は、0.08〜0.15 で、全部失敗した)
+start_mode, detect_mode, detect_reason = "休めの姿勢から", "最初の検出(休めの姿勢)", ""  # 今の色が、どこから始まり、どの検出を使ったか(記録に残す。色の切り替えのたびに更新)
 result_judged = False  # 最後の色の判定を、すでに切り替えのときに済ませたか(True なら、run_real_trial.sh は、最後の判定を飛ばす)
 
 
@@ -131,7 +133,8 @@ def write_result():
     """今の色の結果を real_trial_result.json に書く(判定 judge_real_trial.py が読む)。"""
     (OUT / "real_trial_result.json").write_text(json.dumps(
         {"tag": plan["tag"], "time": time.strftime("%Y-%m-%d %H:%M:%S"), "last_stage": last, "total_stages": len(plan["stages"]), "arm_moved": arm_moved, "abort_reason": abort_reason,
-         "grip_after_close": grip_after_close, "max_joint_err_deg": round(max_joint_err, 2), "cycle_s": round(time.time() - t_start, 1), "judged": result_judged},
+         "grip_after_close": grip_after_close, "max_joint_err_deg": round(max_joint_err, 2), "cycle_s": round(time.time() - t_start, 1), "judged": result_judged,
+         "start_mode": start_mode, "detect_mode": detect_mode, "detect_reason": detect_reason},
         ensure_ascii=False, indent=2))
 
 
@@ -176,24 +179,46 @@ def advance(prev, queue, at_rest):
     ② その検出を、前の色の「置いたあとの検出」として、前の色を判定する。
     ③ queue の次の色を、今の姿勢(または休めの姿勢)から計画する。計画できない色は、判定して飛ばす(範囲外は、記録しない)。
     戻り値: 次の色の計画(辞書)。もう運ぶ色が無ければ None。"""
-    global current, result_judged
-    seen = set(json.loads((OUT / "trial_before.json").read_text())["cubes"])  # 前の検出で見えていた色
+    global current, result_judged, start_mode, detect_mode, detect_reason
+    prev_cubes = json.loads((OUT / "trial_before.json").read_text())["cubes"]  # 前の検出(切り替える前)
+    target = queue[0]  # 次に運ぶ色。隠れたかの判定は、この色だけで行う(ほかの色が隠れても、休めの姿勢へは戻らない)
+
+    def reason_if_bad(rc_, d):
+        """次の色が、使える検出になっていなければ、その理由(文字列)。使えるなら ""。"""
+        if rc_ != 0 or d is None:
+            return "検出できなかった"
+        if target not in d["cubes"]:
+            return f"次の色({target})が見えない"
+        iou = d["cubes"][target].get("yaw_iou", 1.0)
+        if iou < IOU_MIN_NEXT:  # 色は一部見えているが、形が合わない = 腕などが一部を隠していて、位置・向きが当てにならない
+            return f"次の色({target})の IoU = {iou:.2f} < {IOU_MIN_NEXT}(腕が一部を隠している)"
+        return ""
+
     print("\n=== 次の立方体の検出(" + ("休めの姿勢から" if at_rest else "置いた姿勢のまま") + ")===")
     rc, data = run_detect("trial_next")
-    hidden = args.force_hidden or not (rc == 0 and data is not None and seen <= set(data["cubes"]))  # --force-hidden: 確認用に、隠れたことにする
-    if hidden and not at_rest:
-        print("→ " + ("確認用(--force-hidden)" if args.force_hidden else "腕が立方体を隠している(または検出できなかった)") + "。休めの姿勢へ戻って、検出し直す")
+    reason = "確認用(--force-hidden)" if args.force_hidden else reason_if_bad(rc, data)
+    detect_mode, detect_reason = ("休めの姿勢で検出" if at_rest else "置いた姿勢のまま検出"), ""
+    if reason and not at_rest:
+        print(f"→ {reason}。休めの姿勢へ戻って、検出し直す")
         current = {k: v for k, v in robot.get_observation().items() if k.endswith(".pos")}
         move_to(robot, current, {**plan["home"], "gripper.pos": current["gripper.pos"]}, max(3.0, plan.get("return_seconds", 8.0) / args.speed))
         current = {**plan["home"], "gripper.pos": current["gripper.pos"]}
         at_rest = True
         time.sleep(2.0)  # 腕が止まって、カメラの前から外れるのを待つ
         rc, data = run_detect("trial_next")
+        detect_mode, detect_reason = "休めの姿勢へ戻って検出し直し", reason
     for ext in ("json", "png"):  # この検出を、前の色の「置いたあとの検出」にする(判定が trial_after.* を読む)
         if (OUT / f"trial_next.{ext}").exists():
             shutil.copy(OUT / f"trial_next.{ext}", OUT / f"trial_after.{ext}")
         else:
             (OUT / f"trial_after.{ext}").unlink(missing_ok=True)
+    if data is not None:  # まだ運んでいない色が、今回の検出で見えなくても(腕の陰など)、前の検出の位置を使う。隣の立方体の位置が、計画(隣を避ける向き選び)から抜けないため
+        carried = [c for c in queue if c not in data["cubes"] and c in prev_cubes]
+        for c in carried:
+            data["cubes"][c] = {**prev_cubes[c], "carried": True}
+        if carried:
+            print(f"(今回見えなかった {carried} は、前の検出の位置を使う)")
+            (OUT / "trial_next.json").write_text(json.dumps(data, ensure_ascii=False, indent=2))
     print(f"\n--- {prev} の判定 ---")
     run_judge(prev)
     result_judged = True
@@ -219,6 +244,7 @@ def advance(prev, queue, at_rest):
         if pr.returncode != 0:
             run_judge(color, "--stage-failed", "neighbor" if pr.returncode == 3 else "plan")
             continue
+        start_mode = "休めの姿勢から" if at_rest else "前の置き場の真上から"
         result_judged = False  # 次の色の結果は、これから
         return json.loads((OUT / f"pick_plan_{color}.json").read_text())
     return None

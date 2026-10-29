@@ -38,7 +38,8 @@ OUT = ROOT / "outputs"
 # 試験番号は、その CSV の行数から数えるので、新しい CSV では 1 から始まる。os.environ.get(名前, 既定値): 環境変数を読む。[頻度] シェル経由で設定を渡す定番
 LOG = OUT / os.environ.get("TRIAL_LOG", "real_trials.csv")
 FIELDS = ["trial", "time", "color", "success", "fail_class", "true_x", "true_y", "true_yaw_deg", "final_x", "final_y", "final_err_mm", "moved_others_mm", "contact", "avoid",
-          "cycle_s", "grip_after_close", "max_joint_err_deg", "board_markers", "board_reproj_px", "detail", "note"]  # true_* は「掴む前に検出した位置 [m]」(sim の列名に合わせた)
+          "cycle_s", "grip_after_close", "max_joint_err_deg", "board_markers", "board_reproj_px", "detail", "note",
+          "stages_done", "ended", "start", "detect", "detect_reason"]  # 後ろの 5 列: 動きを最後まで終えたか(8 段階のうち何まで)、終わり方、始まった姿勢、検出の方法(連続仕分け)  # true_* は「掴む前に検出した位置 [m]」(sim の列名に合わせた)
 
 
 def read_json(name):
@@ -61,7 +62,8 @@ def classify(color):
     before, after, res = read_json("trial_before.json"), read_json("trial_after.json"), read_json("real_trial_result.json")
     plan = read_json(f"pick_plan_{color}.json")
     extra = {"board_markers": "", "board_reproj_px": "", "true_x": "", "true_y": "", "true_yaw_deg": "", "final_x": "", "final_y": "", "final_err_mm": "",
-             "moved_others_mm": "", "contact": "", "cycle_s": "", "grip_after_close": "", "max_joint_err_deg": ""}
+             "moved_others_mm": "", "contact": "", "cycle_s": "", "grip_after_close": "", "max_joint_err_deg": "",
+             "stages_done": "", "ended": "", "start": "", "detect": "", "detect_reason": ""}
     extra["avoid"] = "隣を避けて向きを選んだ" if plan and plan.get("avoided_neighbor") else ""
     if before is not None:
         extra["board_markers"], extra["board_reproj_px"] = before.get("board_markers", ""), round(before.get("board_reproj_px", 0), 2)
@@ -70,6 +72,10 @@ def classify(color):
             extra.update(true_x=round(c["x_m"], 4), true_y=round(c["y_m"], 4), true_yaw_deg=round(c["yaw_deg"], 1))
     if res is None:
         return False, "安全停止", "real_trial_result.json が無い(実機の実行が、結果を書く前に終わった)", extra
+    # 動きをどこまで終えたか(段階 1〜8)。完了 = 8 段階とも終えた。中止 = 安全装置などで途中で止まり、真上から休めの姿勢へ戻った
+    extra.update(stages_done=f"{res['last_stage']}/{res['total_stages']}",
+                 ended="完了" if (res["abort_reason"] is None and res["last_stage"] >= res["total_stages"]) else "中止: " + str(res["abort_reason"] or f"段階 {res['last_stage']} で終わった"),
+                 start=res.get("start_mode", ""), detect=res.get("detect_mode", ""), detect_reason=res.get("detect_reason", ""))
     extra.update(cycle_s=res["cycle_s"], grip_after_close=res["grip_after_close"] if res["grip_after_close"] is not None else "", max_joint_err_deg=res["max_joint_err_deg"])
     reason = res["abort_reason"]
     finished = reason is None and res["last_stage"] >= res["total_stages"]
@@ -142,6 +148,17 @@ if args.stage_failed:
 else:
     ok, cls, detail, extra = classify(args.color)
 
+if LOG.exists():
+    with open(LOG, newline="") as f:
+        header = next(csv.reader(f), [])
+    if header != FIELDS:  # 古い列のままの CSV に、新しい列を足す。バックアップを残してから、全部の行を書き直す(古い行の新しい列は空)
+        shutil.copy(LOG, LOG.with_name(LOG.stem + "_backup_before_columns.csv"))
+        old_rows = list(csv.DictReader(open(LOG)))
+        with open(LOG, "w", newline="") as f:
+            w = csv.DictWriter(f, fieldnames=FIELDS, restval="")
+            w.writeheader()
+            w.writerows(old_rows)
+        print(f"(記録の列を増やした: {LOG.name}。元は {LOG.stem}_backup_before_columns.csv)")
 n = 1
 if LOG.exists():
     n = len(list(csv.DictReader(open(LOG)))) + 1  # 行数 + 1 が、今回の試験番号。csv.DictReader: 1 行目を列名として、各行を辞書で読む。[頻度] CSV を読む定番
