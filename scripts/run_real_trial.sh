@@ -3,6 +3,7 @@
 # 使い方: scripts/run_real_trial.sh 色 [real_pick_place.py に渡す引数]
 #   例: scripts/run_real_trial.sh green                   (最初の数回向け。終了時に、腕を支える確認が出る)
 #       scripts/run_real_trial.sh green --no-confirm-end  (慣れたあと。最初の Enter 1 回だけで、最後まで自動)
+# 記録先を分けたいとき: TRIAL_LOG=real_trials_phase6.csv scripts/run_real_trial.sh green(outputs/ の中のファイル名。無ければ real_trials.csv。試験番号は 1 から数え直す)
 # 準備: 立方体を机に置く(置き場には置かない)。腕は休めの姿勢にする。試験が終わったら、立方体を置き場から取り、別の場所に置き直して、もう一度実行する。
 # 流れ: (1) 検出(掴む前)→ (2) 計画 → (3) 実機(--auto。最初の Enter 1 回だけ)→ (4) 休めの姿勢へ戻ったあとの検出 → (5) 判定と記録。
 #       (1)(2) で失敗したら、動かさずに「検出失敗」「届かない」として記録して終わる。(3) の途中で安全装置が働いたら、真上へ戻って中止し、「安全停止」「把持失敗」として記録する。

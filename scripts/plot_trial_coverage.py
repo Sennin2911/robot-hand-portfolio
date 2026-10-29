@@ -29,10 +29,11 @@ Y_MIN, Y_MAX = -0.20, 0.10  # 立方体を置く範囲の、左右(カメラに�
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--since", default="", help="この日時(例: '2026-10-29 14:00')以降の試験だけを描く。指を替えた(クッション)後だけを見たいときなど。既定は全部")
+parser.add_argument("--log", default="real_trials.csv", help="読む outputs/ の中の試験の CSV(改善後だけの CSV を使うときなど)")
 parser.add_argument("--out", default="trial_coverage.png", help="保存する outputs/ の中のファイル名")
 args = parser.parse_args()
 # 文字列の大小比較: 'YYYY-MM-DD HH:MM:SS' の形なら、日時の前後と同じ順になる。[頻度] この形式の日時では定番の簡単な書き方
-rows = [r for r in csv.DictReader(open(ROOT / "outputs" / "real_trials.csv")) if not r["note"].startswith("無効") and r["true_x"] != "" and r["time"] >= args.since]
+rows = [r for r in csv.DictReader(open(ROOT / "outputs" / args.log)) if not r["note"].startswith("無効") and r["true_x"] != "" and r["time"] >= args.since]
 if not rows:
     sys.exit("まだ、位置の分かる試験が無い")
 X, Y = np.array([float(r["true_x"]) for r in rows]), np.array([float(r["true_y"]) for r in rows])

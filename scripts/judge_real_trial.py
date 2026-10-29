@@ -11,6 +11,7 @@
 import argparse
 import csv
 import json
+import os
 import shutil
 import sys
 import time
@@ -33,7 +34,9 @@ parser.add_argument("--note", default="", help="メモ(照明を変えた、な�
 args = parser.parse_args()
 
 OUT = ROOT / "outputs"
-LOG = OUT / "real_trials.csv"
+# 記録先の CSV: 環境変数 TRIAL_LOG で切り替える(例: TRIAL_LOG=real_trials_phase6.csv)。無ければ従来の real_trials.csv。
+# 試験番号は、その CSV の行数から数えるので、新しい CSV では 1 から始まる。os.environ.get(名前, 既定値): 環境変数を読む。[頻度] シェル経由で設定を渡す定番
+LOG = OUT / os.environ.get("TRIAL_LOG", "real_trials.csv")
 FIELDS = ["trial", "time", "color", "success", "fail_class", "true_x", "true_y", "true_yaw_deg", "final_x", "final_y", "final_err_mm", "moved_others_mm", "contact", "avoid",
           "cycle_s", "grip_after_close", "max_joint_err_deg", "board_markers", "board_reproj_px", "detail", "note"]  # true_* は「掴む前に検出した位置 [m]」(sim の列名に合わせた)
 
@@ -149,5 +152,5 @@ if extra.get("moved_others_mm") not in (None, ""):
     print(f"  今回のほかの立方体の動き: {extra.get('moved_others_mm', '')} mm" + (f"({extra['contact']})" if extra.get("contact") else "(接触なし)"))
 rows = [r for r in csv.DictReader(open(LOG)) if not r["note"].startswith("無効")]  # メモが「無効」で始まる試験(装置の都合で測れなかったもの)は、通算に数えない
 ok_n = sum(r["success"] == "True" for r in rows)
-print(f"  通算: {ok_n} / {len(rows)} 成功(記録: outputs/real_trials.csv)")
+print(f"  通算: {ok_n} / {len(rows)} 成功(記録: {LOG.relative_to(ROOT)})")
 print(f"  通算の、ほかの立方体への接触: 軽い {sum(r['contact'] == '軽い接触' for r in rows)} 回、明らかに動かした {sum(r['contact'] == '明らかに動かした' for r in rows)} 回")
