@@ -1,2 +1,6 @@
 time,tag,plan_x_mm,plan_y_mm,reach_mm,hand_yaw_deg,board_markers,board_reproj_px,cube_found,cube_area_px,dx,dy,dz,used,note
 2026-10-25 23:47:53,PICK_green,249.3,22.8,211.7,-26.0,3,2.4,True,473,0.1,7.6,3.5,False,
+2026-10-29 14:03:34,PICK_green,218.8,-77.9,196.1,398.0,3,2.4,True,473,0.1,7.6,3.5,False,
+2026-10-29 14:06:18,PICK_green,223.5,-80.4,201.4,43.0,3,2.4,True,473,0.1,7.6,3.5,False,
+2026-10-29 14:08:46,PICK_green,220.5,-53.6,189.5,335.0,3,2.4,True,473,0.1,7.6,3.5,False,
+2026-10-29 14:17:41,PICK_green,168.8,-64.1,145.0,-32.0,3,2.4,True,473,0.1,7.6,3.5,False,
