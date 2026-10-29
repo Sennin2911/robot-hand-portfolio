@@ -21,7 +21,7 @@ from hand_sim.fixed_board import SHOULDER_AXIS_X_SIM_M, SIDE_MM, board_marker_co
 from hand_sim.cube_world import fit_cube_yaw, marker_mask, search_hull, search_roi, white_balance_by_paper  # noqa: E402
 from hand_sim.real_camera import load_camera, pixel_to_world_plane_K, project_points_K, undistort_image  # noqa: E402
 from hand_sim.vision import find_cube_pose_hsv  # noqa: E402
-from hand_sim.webcam import grab_frame, list_cameras, set_manual_exposure  # noqa: E402
+from hand_sim.webcam import grab_frames, list_cameras, set_manual_exposure  # noqa: E402
 
 # コマンドラインの引数を受け取る仕組み。[頻度] スクリプトに「設定を変えて実行したい」ときの定番
 parser = argparse.ArgumentParser()
@@ -32,6 +32,8 @@ parser.add_argument("--extend-down", type=int, default=0, metavar="PX",
 # (run_real_trial.sh は、このスクリプトに引数を渡せないので、DETECT_EXPOSURE=600 scripts/run_real_trial.sh green のように環境変数で渡す)
 parser.add_argument("--exposure", type=int, default=int(os.environ.get("DETECT_EXPOSURE", "300")), help="露出(0.1 ミリ秒単位。既定 300。環境変数 DETECT_EXPOSURE でも指定できる)")
 parser.add_argument("--gain", type=int, default=int(os.environ.get("DETECT_GAIN", "32")), help="ゲイン(0〜63。既定 32。環境変数 DETECT_GAIN でも指定できる)")
+parser.add_argument("--frames", type=int, default=int(os.environ.get("DETECT_FRAMES", "5")),
+                    help="続けて撮る枚数(既定 5。環境変数 DETECT_FRAMES でも指定できる)。画素ごとの中央値を 1 枚にして使う。1 コマごとの細かいノイズで、塊の縁が揺れ、向きの検出が変わるのを減らす。1 なら、従来どおり 1 枚")
 parser.add_argument("--out-json", default="cubes_detected.json", help="結果を保存する outputs/ の中のファイル名(試験の「掴む前」「置いた後」を別々に残すために変える。既定は plan_pick_test.py が読む名前)")
 parser.add_argument("--out-png", default="real_detect.png", help="印と探す範囲を描いた画像を保存する outputs/ の中のファイル名")
 args = parser.parse_args()
@@ -43,6 +45,7 @@ CUBE_M = 0.030  # 立方体の 1 辺(ノギスで測った値)
 R_UNREACHABLE_M = 0.08
 R_UNSTABLE_M = 0.10
 R_FAR_UNTESTED_M = 0.28
+YAW_SPREAD_MAX_DEG = 8.0  # 1 コマごとに向きを当てはめたときの、中央の向きからの最大のずれの上限(これを超えたら、向きが揺れていると警告)
 # 前回の検出結果を、先に消す。今回の検出が途中で失敗しても(暗くて見つからない、カメラが読めない、マーカーが足りないなど)、
 # 古い位置が残って、plan_pick_test.py がそれで計画を作ってしまわないため。成功した色だけが、最後に書き直される。
 # unlink(missing_ok=True): ファイルを消す。無くてもエラーにしない。[頻度] 「あれば消す」の定番
@@ -53,7 +56,9 @@ device = next(devs[0] for name, devs in list_cameras() if "WebCamera" in name)
 # (record_hand_sample.py は、手の板を読むために露出を 100〜1600 の間で変え、その値を残す)。設定しないと、実行のたびに画像の明るさが変わる。
 # 既定値は、立方体の色検出が合う条件(露出 300、ホワイトバランス 4500、ゲイン 32)。暗いときは --exposure / --gain(または環境変数)で変える。[頻度] 色で検出するスクリプトでは、毎回固定するのが定番
 set_manual_exposure(device, exposure=args.exposure, white_balance=4500, gain=args.gain)
-fixed = undistort_image(grab_frame(device), cam["K"], cam["dist"])
+frames = grab_frames(max(args.frames, 1), device)
+# np.median(axis=0): 枚数の方向(0 番目の軸)で、画素ごとの中央値を取る。ノイズで 1 コマだけ外れた値を捨てられる。[頻度] 複数枚の画像を重ねてノイズを減らすときの定番
+fixed = undistort_image(np.median(frames, axis=0).astype(np.uint8), cam["K"], cam["dist"])
 board = {i: m for i, m in detect_markers(fixed, cam["K"], np.zeros(5), SIDE_MM / 1000).items() if 1 <= i <= 6}
 if len(board) < 4:
     sys.exit(f"板のマーカーが {len(board)} 個しか見えない(4 個以上要る)。カメラ・明るさ・立方体が隠していないかを確認する")
@@ -74,6 +79,13 @@ cv2.polylines(annotated, [hull.astype(np.int32)], True, (0, 255, 255), 2)
 draw = {"red": (0, 0, 255), "green": (0, 200, 0), "blue": (255, 0, 0)}
 out = {}
 board_mask = marker_mask(fixed.shape, cam_pos, cam_R, cam["K"])  # 板のマーカーの黒い四角(立方体を探す範囲から除いている部分)
+# 1 コマごとの、色の塊(向きの揺れを見るため)。画素ごとの中央値の画像を使う本番の判定とは別に、各コマで同じ色判定をする
+frame_masks = {c: [] for c in ("red", "green", "blue")}
+if len(frames) > 1:
+    for f in frames:
+        bal_f, _g = white_balance_by_paper(undistort_image(f, cam["K"], cam["dist"]), cam_pos, cam_R, cam["K"])
+        for c in frame_masks:
+            frame_masks[c].append(find_cube_pose_hsv(bal_f, c, roi, return_mask=True)[1])  # [1]: (姿勢, 塊) のうち塊だけ。見つからなければ None
 for color in ("red", "green", "blue"):
     pose, mask = find_cube_pose_hsv(balanced, color, roi, return_mask=True)
     if pose is None:
@@ -84,7 +96,20 @@ for color in ("red", "green", "blue"):
     # 向き: 立方体の 3 次元の形を画像に映して、見えている塊と重なりが最大になる向きを探す(cube_world.fit_cube_yaw)。
     # 旧方式(塊の中で明るい上位 40% の画素 = 上面、と見なして向きを出す)は、上面と側面が同じ色で明るさでは分けられず、同じ画像でも 41° ↔ 67° と揺れた。
     # 位置(x, y)は、これまでどおり塊の外接長方形の中心(定規で測った位置との差 2 mm 前後)。形の当てはめの中心とは、数 mm 違う。
-    yaw_world, _fit_center, fit_iou = fit_cube_yaw(mask, cam_pos, cam_R, cam["K"], pixel_to_world_plane_K(u, v, cam_pos, cam_R, cam["K"], CUBE_M / 2)[:2])
+    yaw_world, _fit_center, fit_iou, yaw_contrast = fit_cube_yaw(mask, cam_pos, cam_R, cam["K"], pixel_to_world_plane_K(u, v, cam_pos, cam_R, cam["K"], CUBE_M / 2)[:2])
+    # 向きの揺れ: 撮った 1 コマごとに、同じ当てはめをして、上で出した向きからのずれの最大を見る(0〜90° は 90° で一周するので、差は 90° で折り返して測る)。
+    # 同じ置き方で撮り直すと向きが 20° 近く変わる(緑)のを、1 回の検出の中で見つけるため。コマが 1 枚なら測れない(None)。
+    spread = None
+    if len(frame_masks) > 1:
+        yaws = []
+        for fm in frame_masks[color]:
+            if fm is not None:
+                yaws.append(fit_cube_yaw(fm, cam_pos, cam_R, cam["K"], pixel_to_world_plane_K(u, v, cam_pos, cam_R, cam["K"], CUBE_M / 2)[:2])[0])
+        if len(yaws) > 1:
+            diffs = [abs((y - yaw_world + 45) % 90 - 45) for y in yaws]  # (差 + 45) を 90 で割った余り − 45: 差を −45〜45° に収める。%: 割った余り。[頻度] 角度の折り返しの定番
+            spread = float(max(diffs))
+            if spread > YAW_SPREAD_MAX_DEG:
+                print(f"  (注意: {color} の向きが揺れている。撮った {len(yaws)} コマごとの向きが、最大 {spread:.0f}° ずれた(目安 {YAW_SPREAD_MAX_DEG:.0f}°)。±10〜20° の誤差がありうる。置き直す、または撮り直す)")
     if fit_iou < 0.5:
         print(f"  (注意: {color} の形の当てはめの重なり IoU = {fit_iou:.2f} と低い。向きが当てにならない。塊が欠けている・他の物と混ざっている可能性)")
     # 立方体が板のマーカーの上(または、すぐ隣)にあるか: 塊を 6 画素太らせて、マーカーの領域と重なる画素を数える。
@@ -106,7 +131,7 @@ for color in ("red", "green", "blue"):
         print(f"  (遠い: {color} は肩の軸から {r * 100:.1f} cm。{R_FAR_UNTESTED_M * 100:.0f} cm より遠い範囲は試験していない)")
     else:
         reach = "ok"
-    out[color] = {"reach": reach, "reach_r_m": round(float(r), 4), "on_marker": on_marker, "x_m": float(xy[0]), "y_m": float(xy[1]), "yaw_deg": yaw_world, "yaw_iou": round(fit_iou, 2), "uv": [float(u), float(v)]}
+    out[color] = {"reach": reach, "reach_r_m": round(float(r), 4), "on_marker": on_marker, "x_m": float(xy[0]), "y_m": float(xy[1]), "yaw_deg": yaw_world, "yaw_iou": round(fit_iou, 2), "yaw_contrast": round(yaw_contrast, 3), "yaw_spread_deg": None if spread is None else round(spread, 1), "uv": [float(u), float(v)]}
     print(f"{color:5s}: 世界座標 x = {xy[0] * 1000:6.1f} mm、y = {xy[1] * 1000:6.1f} mm、向き(世界座標、0〜90°)= {yaw_world:.0f}°(画素 ({u:.0f}, {v:.0f}))")
     cv2.drawMarker(annotated, (int(u), int(v)), draw[color], cv2.MARKER_CROSS, 40, 3)
     cv2.putText(annotated, color, (int(u) + 25, int(v) - 25), cv2.FONT_HERSHEY_SIMPLEX, 1.0, draw[color], 2)

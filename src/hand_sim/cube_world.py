@@ -98,7 +98,7 @@ def fit_cube_yaw(mask, cam_pos, cam_R, K, center_xy, search_mm=8.0):
     なぜ要るか: 立方体の上面と側面は同じ色で、明るさでは分けられない(明るい上位 40% の画素から向きを出す旧方式は、同じ画像でも 41° ↔ 67° と揺れた)。
     形から合わせれば、側面が見えている分も計算に入るので、上面と側面を取り違えない。
     やり方: 向き(1° 刻み)と、中心の位置(center_xy のまわり ±search_mm、2 mm 刻み)を変え、立方体の 8 つの角を画像に映して、囲んだ形(凸包)と mask の IoU
-    (重なった面積 ÷ 合わせた面積。1 に近いほどよく合う)が最大のものを選ぶ。[頻度] 「モデルを映して、見えたものと重ねる」は、物体の姿勢を推定する定番の考え方(analysis-by-synthesis)。
+    (重なった面積 ÷ 合わせた面積。1 に近いほどよく合う)が最大のものを選ぶ。戻り値は (yaw, (x, y), IoU, contrast)。contrast は向きの確からしさ(下を参照)。[頻度] 「モデルを映して、見えたものと重ねる」は、物体の姿勢を推定する定番の考え方(analysis-by-synthesis)。
     center_xy: 中心の最初の見積もり(世界座標 [m])。mask の外接長方形の中心を、立方体の半分の高さに当てた値でよい。"""
     v_idx, u_idx = np.nonzero(mask)
     u0, u1, v0, v1 = u_idx.min() - 30, u_idx.max() + 30, v_idx.min() - 30, v_idx.max() + 30  # 計算を軽くするため、塊のまわりだけ切り出す
@@ -119,12 +119,16 @@ def fit_cube_yaw(mask, cam_pos, cam_R, K, center_xy, search_mm=8.0):
 
     best = (-1.0, 0.0, center_xy[0], center_xy[1])
     steps = np.arange(-search_mm, search_mm + 0.1, 2.0) / 1000
+    best_per_yaw = []  # 向きごとの、最良の IoU(向きの確からしさを出すため)
     for yaw in range(0, 90, 3):  # 粗い探索(3° 刻み)
+        best_here = 0.0
         for dx in steps:
             for dy in steps:
                 score = iou(np.radians(yaw), center_xy[0] + dx, center_xy[1] + dy)
+                best_here = max(best_here, score)
                 if score > best[0]:
                     best = (score, yaw, center_xy[0] + dx, center_xy[1] + dy)
+        best_per_yaw.append(best_here)
     score, yaw0, cx, cy = best
     for yaw in range(int(yaw0) - 3, int(yaw0) + 4):  # 細かい探索(1° 刻み)
         for dx in np.arange(-0.002, 0.0021, 0.001):
@@ -133,4 +137,7 @@ def fit_cube_yaw(mask, cam_pos, cam_R, K, center_xy, search_mm=8.0):
                 if sc > best[0]:
                     best = (sc, yaw, cx + dx, cy + dy)
     score, yaw, cx, cy = best
-    return float(yaw % 90), (cx, cy), float(score)
+    # 向きの確からしさ(contrast): 最良の IoU から、全部の向きの最良 IoU の中央値を引いた値。山がはっきりしていれば大きく、なだらか(どの向きでも同じくらいに重なる)なら 0 に近い。
+    # 0 に近いと、塊が少し崩れるだけで、別の向きが勝つ(緑の暗い立方体で、同じ画像から 74° と 55° が出た)。np.median: 中央値。[頻度] 外れ値に強い「ふつうの値」として定番
+    contrast = float(score - np.median(best_per_yaw))
+    return float(yaw % 90), (cx, cy), float(score), contrast

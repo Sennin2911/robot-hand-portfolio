@@ -36,6 +36,18 @@ def grab_frame(device="/dev/video2", size=(1920, 1080), settle_frames=30, timeou
     return np.asarray(iio.imread(result.stdout, extension=".png"))[:, :, :3]  # [:, :, :3]: アルファ(透明度)があれば捨てて、RGB の 3 チャンネルにする
 
 
+def grab_frames(n, device="/dev/video2", size=(1920, 1080), settle_frames=30, timeout=30):
+    """device から、続けて n 枚の画像を取り込み、(n × 高さ × 幅 × 3) の RGB 配列で返す。settle_frames コマを捨ててから、続く n コマを使う(ffmpeg を 1 回だけ起動する)。
+    なぜ grab_frame を n 回呼ばないか: 1 回ごとに、カメラを開いて settle_frames コマを捨てるので、n 倍の時間がかかる。ここは 1 回で済ませる。"""
+    cmd = ["ffmpeg", "-y", "-loglevel", "error", "-f", "v4l2", "-input_format", "mjpeg", "-video_size", f"{size[0]}x{size[1]}", "-framerate", "30",
+           "-i", device, "-frames:v", str(settle_frames + n), "-vf", f"select=gte(n\\,{settle_frames})", "-vsync", "0", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"]  # select=gte(n,30): 30 コマ目より後だけ出力。rawvideo: 圧縮なしの画素を、そのまま並べて出す
+    result = subprocess.run(cmd, capture_output=True, timeout=timeout)
+    frame_bytes = size[0] * size[1] * 3
+    if result.returncode != 0 or len(result.stdout) < n * frame_bytes:
+        raise RuntimeError(f"{device} から {n} 枚を取り込めなかった: {result.stderr.decode(errors='replace')[:200]}")
+    return np.frombuffer(result.stdout[:n * frame_bytes], np.uint8).reshape(n, size[1], size[0], 3)  # frombuffer: バイト列を、コピーせずに配列として見る。[頻度] 生の画像データを扱うときの定番
+
+
 def set_manual_exposure(device="/dev/video2", exposure=300, white_balance=4500, gain=None):
     """露出とホワイトバランスを、自動 → 固定にする(v4l2-ctl)。exposure の単位は、0.1 ミリ秒(このカメラの exposure_time_absolute。1〜5000)。
     なぜ固定するか: 自動のままだと、立方体の位置や、光の当たり方で、色の見え方が変わり、色検出の条件(vision.py の color_mask)が成り立たなくなる。"""

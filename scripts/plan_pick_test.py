@@ -52,6 +52,8 @@ if cube.get("on_marker", False):
 if cube.get("yaw_iou", 1.0) < 0.5:  # dict.get(キー, 既定値): キーが無ければ既定値。古い検出結果には yaw_iou が無い。[頻度] 定番
     print(f"  ※ 注意: 向きの当てはめの重なり IoU = {cube['yaw_iou']:.2f} と低い(0.5 未満)。向きが 10° 以上外れている可能性がある。"
           "心配なら、検出し直す(立方体の位置を少し動かす、露出を変える)。掴んだあとの指の読みが 25 を超えれば、安全装置が止める")
+if (cube.get("yaw_spread_deg") or 0) > 8.0:  # None(コマが 1 枚)や古い検出結果(キー無し)は、0 として警告しない。[頻度] 「無いかもしれない値」を扱う定番の書き方
+    print(f"  ※ 注意: 撮ったコマごとの向きが、最大 {cube['yaw_spread_deg']:.0f}° ずれた。向きが揺れていて、手の向きが面から 10〜20° ずれるかもしれない。心配なら、検出し直す")
 r_cube = float(np.hypot(cube["x_m"] - AXIS[0], cube["y_m"] - AXIS[1]))
 print(f"{args.color}: 位置 ({cube['x_m'] * 1000:.0f}, {cube['y_m'] * 1000:.0f}) mm、肩の軸から {r_cube * 100:.1f} cm、向き {cube['yaw_deg']:.0f}°")
 if r_cube > 0.23:
