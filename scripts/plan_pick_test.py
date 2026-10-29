@@ -47,6 +47,8 @@ model = mujoco.MjModel.from_xml_path(str(ROOT / "models/so101/so101_new_calib.xm
 data = mujoco.MjData(model)
 sid = model.site("gripperframe").id
 AXIS = data.xpos[model.body("shoulder").id][:2].copy() if mujoco.mj_forward(model, data) is None else None
+if cube.get("on_marker", False):
+    print("  ※ 注意: 立方体が板のマーカーに重なっている(検出が欠ける)。位置・向きが数 mm〜10 mm / 数十度ずれて、掴めない・面に垂直に挟めないことがある。マーカーから 30 mm 以上離して置き直すこと")
 if cube.get("yaw_iou", 1.0) < 0.5:  # dict.get(キー, 既定値): キーが無ければ既定値。古い検出結果には yaw_iou が無い。[頻度] 定番
     print(f"  ※ 注意: 向きの当てはめの重なり IoU = {cube['yaw_iou']:.2f} と低い(0.5 未満)。向きが 10° 以上外れている可能性がある。"
           "心配なら、検出し直す(立方体の位置を少し動かす、露出を変える)。掴んだあとの指の読みが 25 を超えれば、安全装置が止める")

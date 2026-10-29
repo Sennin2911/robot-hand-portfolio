@@ -17,7 +17,7 @@ import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 from hand_sim.aruco_marker import detect_markers  # noqa: E402
 from hand_sim.fixed_board import SIDE_MM, board_marker_corners_world, camera_pose_from_board  # noqa: E402
-from hand_sim.cube_world import fit_cube_yaw, search_hull, search_roi, white_balance_by_paper  # noqa: E402
+from hand_sim.cube_world import fit_cube_yaw, marker_mask, search_hull, search_roi, white_balance_by_paper  # noqa: E402
 from hand_sim.real_camera import load_camera, pixel_to_world_plane_K, project_points_K, undistort_image  # noqa: E402
 from hand_sim.vision import find_cube_pose_hsv  # noqa: E402
 from hand_sim.webcam import grab_frame, list_cameras, set_manual_exposure  # noqa: E402
@@ -66,6 +66,7 @@ annotated = cv2.cvtColor(fixed, cv2.COLOR_RGB2BGR)
 cv2.polylines(annotated, [hull.astype(np.int32)], True, (0, 255, 255), 2)
 draw = {"red": (0, 0, 255), "green": (0, 200, 0), "blue": (255, 0, 0)}
 out = {}
+board_mask = marker_mask(fixed.shape, cam_pos, cam_R, cam["K"])  # 板のマーカーの黒い四角(立方体を探す範囲から除いている部分)
 for color in ("red", "green", "blue"):
     pose, mask = find_cube_pose_hsv(balanced, color, roi, return_mask=True)
     if pose is None:
@@ -79,7 +80,13 @@ for color in ("red", "green", "blue"):
     yaw_world, _fit_center, fit_iou = fit_cube_yaw(mask, cam_pos, cam_R, cam["K"], pixel_to_world_plane_K(u, v, cam_pos, cam_R, cam["K"], CUBE_M / 2)[:2])
     if fit_iou < 0.5:
         print(f"  (注意: {color} の形の当てはめの重なり IoU = {fit_iou:.2f} と低い。向きが当てにならない。塊が欠けている・他の物と混ざっている可能性)")
-    out[color] = {"x_m": float(xy[0]), "y_m": float(xy[1]), "yaw_deg": yaw_world, "yaw_iou": round(fit_iou, 2), "uv": [float(u), float(v)]}
+    # 立方体が板のマーカーの上(または、すぐ隣)にあるか: 塊を 6 画素太らせて、マーカーの領域と重なる画素を数える。
+    # 塊は、マーカーの領域を除いて作っているので、マーカーに乗った立方体は、その部分が直線で欠ける。すると、向きが 0° / 90° に偏り、位置も数 mm〜10 mm ずれる(試験 84、85、91、92 は、4 件とも向きが 4〜6° / 82〜88° だった)。
+    touch = int((cv2.dilate(mask.astype(np.uint8), np.ones((13, 13), np.uint8)).astype(bool) & board_mask).sum())
+    on_marker = touch > 40
+    if on_marker:
+        print(f"  (注意: {color} の立方体は、板のマーカーに重なっている・接している(接する画素 {touch})。位置と向きが信用できない。マーカーから 30 mm 以上離して置き直す)")
+    out[color] = {"on_marker": on_marker, "x_m": float(xy[0]), "y_m": float(xy[1]), "yaw_deg": yaw_world, "yaw_iou": round(fit_iou, 2), "uv": [float(u), float(v)]}
     print(f"{color:5s}: 世界座標 x = {xy[0] * 1000:6.1f} mm、y = {xy[1] * 1000:6.1f} mm、向き(世界座標、0〜90°)= {yaw_world:.0f}°(画素 ({u:.0f}, {v:.0f}))")
     cv2.drawMarker(annotated, (int(u), int(v)), draw[color], cv2.MARKER_CROSS, 40, 3)
     cv2.putText(annotated, color, (int(u) + 25, int(v) - 25), cv2.FONT_HERSHEY_SIMPLEX, 1.0, draw[color], 2)
