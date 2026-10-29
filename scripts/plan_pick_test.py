@@ -90,6 +90,11 @@ except NeighborCollision as e:
     # 終了コード 3 = 隣の立方体が近すぎて、どの向きでも掴めない(run_real_trial.sh が、失敗の分類「隣接」にする)。1 は、その他の失敗
     print(f"掴めない: {e}。隣の立方体を、離して置き直す")
     sys.exit(3)
+except ValueError as e:  # NeighborCollision は ValueError の仲間なので、必ずその後ろに書く(先に書くと、隣の衝突もここに入ってしまう)
+    # 終了コード 4 = どの向きでも IK が解けない(拾う姿勢か、置き場へ運ぶ姿勢が、腕の届かない形)。肩に近い位置や、色ごとの置き場との組み合わせで起きる。
+    # run_real_trial.sh は、これを「範囲外」として、記録せずに止める。
+    print(f"範囲外: {e}。この色をこの位置では掴めない。肩の軸から 10 cm 以上離して置き直す")
+    sys.exit(4)
 if info.get("skipped"):
     print(f"隣の立方体を避けて、手の向きを選び直した({info['skipped']} 通りを飛ばした。隣との距離 {info['clearance_mm']:.1f} mm)")
 elif neighbors:
