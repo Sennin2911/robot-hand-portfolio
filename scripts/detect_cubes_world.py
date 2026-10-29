@@ -6,6 +6,7 @@ outputs/cubes_detected.json に保存する(掴む計画 plan_pick_test.py が�
 """
 import argparse
 import json
+import math
 import os
 import sys
 from pathlib import Path
@@ -16,7 +17,7 @@ sys.path.insert(0, str(ROOT / "src"))  # src フォルダを import の探索先
 import cv2  # noqa: E402
 import numpy as np  # noqa: E402
 from hand_sim.aruco_marker import detect_markers  # noqa: E402
-from hand_sim.fixed_board import SIDE_MM, board_marker_corners_world, camera_pose_from_board  # noqa: E402
+from hand_sim.fixed_board import SHOULDER_AXIS_X_SIM_M, SIDE_MM, board_marker_corners_world, camera_pose_from_board  # noqa: E402
 from hand_sim.cube_world import fit_cube_yaw, marker_mask, search_hull, search_roi, white_balance_by_paper  # noqa: E402
 from hand_sim.real_camera import load_camera, pixel_to_world_plane_K, project_points_K, undistort_image  # noqa: E402
 from hand_sim.vision import find_cube_pose_hsv  # noqa: E402
@@ -36,6 +37,12 @@ parser.add_argument("--out-png", default="real_detect.png", help="印と探す�
 args = parser.parse_args()
 
 CUBE_M = 0.030  # 立方体の 1 辺(ノギスで測った値)
+# 肩の軸からの水平距離 r による、掴める範囲の目安(実機の試験 60〜109 の結果から。docs/next_steps.md の「試験の範囲の限界」)。
+# r < 8 cm: 手を真下に向ける姿勢が取れず「届かない」(試験 99、101 の 2 件とも失敗)。 8〜10 cm: 取れる日もあるが不安定(9 件中 4 件成功)。 10 cm 以上: 問題なし(r 10〜21 cm の有効な試験は、動作の失敗なし)。
+# 遠い側の限界は未測定(実績は r 約 21 cm まで)。
+R_UNREACHABLE_M = 0.08
+R_UNSTABLE_M = 0.10
+R_FAR_UNTESTED_M = 0.28
 # 前回の検出結果を、先に消す。今回の検出が途中で失敗しても(暗くて見つからない、カメラが読めない、マーカーが足りないなど)、
 # 古い位置が残って、plan_pick_test.py がそれで計画を作ってしまわないため。成功した色だけが、最後に書き直される。
 # unlink(missing_ok=True): ファイルを消す。無くてもエラーにしない。[頻度] 「あれば消す」の定番
@@ -86,7 +93,20 @@ for color in ("red", "green", "blue"):
     on_marker = touch > 40
     if on_marker:
         print(f"  (注意: {color} の立方体は、板のマーカーに重なっている・接している(接する画素 {touch})。位置と向きが信用できない。マーカーから 30 mm 以上離して置き直す)")
-    out[color] = {"on_marker": on_marker, "x_m": float(xy[0]), "y_m": float(xy[1]), "yaw_deg": yaw_world, "yaw_iou": round(fit_iou, 2), "uv": [float(u), float(v)]}
+    # 肩の軸からの距離。sim の世界座標の原点は、肩の軸の 38.8 mm 後ろ(fixed_board.py)なので、その分を引いてから測る。math.hypot(a, b): √(a²+b²)。[頻度] 距離の計算の定番
+    r = math.hypot(xy[0] - SHOULDER_AXIS_X_SIM_M, xy[1])
+    if r < R_UNREACHABLE_M:
+        reach = "unreachable"
+        print(f"  (範囲外: {color} は肩の軸から {r * 100:.1f} cm。{R_UNREACHABLE_M * 100:.0f} cm より近く、手を真下に向けられず届かない。{R_UNSTABLE_M * 100:.0f} cm 以上に置き直す)")
+    elif r < R_UNSTABLE_M:
+        reach = "unstable"
+        print(f"  (近すぎ: {color} は肩の軸から {r * 100:.1f} cm。{R_UNREACHABLE_M * 100:.0f}〜{R_UNSTABLE_M * 100:.0f} cm は不安定(実績 9 件中 4 件成功)。{R_UNSTABLE_M * 100:.0f} cm 以上に置き直すと確実)")
+    elif r > R_FAR_UNTESTED_M:
+        reach = "far_untested"
+        print(f"  (遠い: {color} は肩の軸から {r * 100:.1f} cm。{R_FAR_UNTESTED_M * 100:.0f} cm より遠い範囲は試験していない)")
+    else:
+        reach = "ok"
+    out[color] = {"reach": reach, "reach_r_m": round(float(r), 4), "on_marker": on_marker, "x_m": float(xy[0]), "y_m": float(xy[1]), "yaw_deg": yaw_world, "yaw_iou": round(fit_iou, 2), "uv": [float(u), float(v)]}
     print(f"{color:5s}: 世界座標 x = {xy[0] * 1000:6.1f} mm、y = {xy[1] * 1000:6.1f} mm、向き(世界座標、0〜90°)= {yaw_world:.0f}°(画素 ({u:.0f}, {v:.0f}))")
     cv2.drawMarker(annotated, (int(u), int(v)), draw[color], cv2.MARKER_CROSS, 40, 3)
     cv2.putText(annotated, color, (int(u) + 25, int(v) - 25), cv2.FONT_HERSHEY_SIMPLEX, 1.0, draw[color], 2)
