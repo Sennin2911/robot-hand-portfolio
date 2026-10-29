@@ -30,8 +30,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--color", required=True, choices=["red", "green", "blue"])
 parser.add_argument("--until", type=int, default=8, help="この段階までで止める(1〜8)")
 parser.add_argument("--refine", type=int, default=0, help="関節の読みによる補正の回数(動いたあと、読みと指令の差を指令に足す)。0 = しない")
-parser.add_argument("--descent-seconds", type=float, default=1.0,
-                    help="降下(段階 2、6)にかける秒数。遅い降下(約 4 秒)は、遊びのところで止まっては動く振動が出た。診断(diagnose_vertical_motion.py)の目視で、4.0 / 2.5 / 1.5 / 1.0 秒のうち 1.0 秒が最も振動が少なかった。"
+parser.add_argument("--descent-seconds", type=float, default=0.5,
+                    help="降下(段階 2、6)にかける秒数。遅い降下(約 4 秒)は、遊びのところで止まっては動く振動が出た。診断(diagnose_vertical_motion.py)の目視で、4.0〜0.5 秒のうち 0.5 秒が最も振動が少なかった。"
+                         "実測(降下の最後の行き過ぎ / 遅れ): 1.0 秒 0.00° / 2.3°、0.7 秒 0.18° / 3.4°、0.5 秒 0.53° / 4.8°(手先で約 2〜3 mm)、0.3 秒 1.49° / 8.1°(手先で 6〜8 mm。机の上 10 mm に近すぎるので使わない)。"
                          "慎重にしたいとき(最初の確認など)は大きくする。0 以下なら、従来の「計画の秒数 ÷ min(--speed, 1.5)」")
 parser.add_argument("--arm-p", type=int, default=24, help="腕の 5 関節のサーボの P_Coefficient(位置の追従の強さ)。LeRobot の既定は 16。降下の振動を目で比べて決めた(P 10 は悪化、24 が最良、32 は jerk が増えた)。16 にすると既定のまま")
 parser.add_argument("--arm-d", type=int, default=64, help="腕の 5 関節のサーボの D_Coefficient(揺れを抑える成分)。LeRobot の既定は 32。64 で降下の振動が減った")
