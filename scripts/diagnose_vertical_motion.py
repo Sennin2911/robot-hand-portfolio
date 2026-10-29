@@ -21,8 +21,10 @@ ROOT = Path(__file__).resolve().parents[1]
 ARM_KEYS = ("shoulder_lift.pos", "elbow_flex.pos", "wrist_flex.pos")  # 上下の動きで主に動く 3 関節
 parser = argparse.ArgumentParser()
 parser.add_argument("--color", default="green", choices=["red", "green", "blue"])
-parser.add_argument("--down", type=float, nargs="+", default=[4.0, 2.5, 1.5], help="降下にかける秒数(複数。順に試す)")
-parser.add_argument("--up", type=float, nargs="+", default=[0.8, 1.5, 2.5], help="持ち上げにかける秒数(複数。順に試す)")
+parser.add_argument("--down", type=float, nargs="+", default=[2.5], help="降下にかける秒数(複数。順に試す)")
+parser.add_argument("--up", type=float, nargs="+", default=[1.5], help="持ち上げにかける秒数(複数。順に試す)")
+parser.add_argument("--accel", type=int, nargs="+", default=[254, 80, 40, 20],
+                    help="サーボの加速度 Acceleration(0〜254。1 あたり 100 ステップ/秒² ≒ 8.8°/秒²)。複数を順に試す。LeRobot は接続時に 254(最大 = 指令ごとに全力で追う)にする。小さいほど、サーボが自分で滑らかに加減速する")
 args = parser.parse_args()
 
 plan = json.loads((ROOT / "outputs" / f"pick_plan_{args.color}.json").read_text())
@@ -68,16 +70,19 @@ try:
     input("腕を休めの姿勢にして、机の上と腕の動く範囲を空けた(立方体なし)。Enter で、真上の姿勢へゆっくり移動(やめるなら Ctrl+C): ")
     move_to(robot, start, above, 8.0)
     time.sleep(1.0)
-    for d, u in zip(args.down, args.up):
-        results.append(("降下", d, recorded_move(robot, above, grasp, d, f"down_{d}", rows)))
-        time.sleep(0.5)
-        results.append(("持ち上げ", u, recorded_move(robot, grasp, above, u, f"up_{u}", rows)))
-        time.sleep(0.5)
+    for acc in args.accel:
+        for motor in robot.bus.motors:  # 全モーターの加速度を書き換える(SRAM の値なので、電源を切ると元に戻る)
+            robot.bus.write("Acceleration", motor, acc)
+        for d, u in zip(args.down, args.up):
+            results.append((f"降下 a={acc}", d, recorded_move(robot, above, grasp, d, f"down_{d}_a{acc}", rows)))
+            time.sleep(0.5)
+            results.append((f"上げ a={acc}", u, recorded_move(robot, grasp, above, u, f"up_{u}_a{acc}", rows)))
+            time.sleep(0.5)
     now = {k: v for k, v in robot.get_observation().items() if k.endswith(".pos")}
     move_to(robot, now, start, 8.0)  # 休めの姿勢へ戻る
     input("腕を支えたら Enter(このあとトルクが切れて、腕は落ちる): ")
 finally:
-    robot.disconnect()
+    robot.disconnect()  # 切断してもサーボの加速度は残る。次に connect() すると 254 に書き直される(LeRobot の既定)
 if rows:
     out = ROOT / "outputs" / f"vertical_motion_{time.strftime('%Y%m%d_%H%M%S')}.csv"
     with open(out, "w", newline="") as f:  # with ... as: ブロックを抜けると、自動でファイルを閉じる。[頻度] ファイルを扱うときの定番
@@ -85,6 +90,6 @@ if rows:
         w.writerow(["label", "tick", "moving"] + [f"cmd_{k}" for k in ARM_KEYS] + [f"act_{k}" for k in ARM_KEYS])
         w.writerows(rows)
     print(f"\n記録: {out}")
-    print(f"{'動き':8s}{'秒':>6s}{'stall%':>9s}{'err_max°':>10s}{'jerk':>8s}{'over°':>8s}")
+    print(f"{'動き':12s}{'秒':>6s}{'stall%':>9s}{'err_max°':>10s}{'jerk':>8s}{'over°':>8s}")
     for name, sec, r in results:
-        print(f"{name:8s}{sec:6.1f}{r['stall']:9.1f}{r['err_max']:10.2f}{r['jerk']:8.3f}{r['over']:8.2f}")
+        print(f"{name:12s}{sec:6.1f}{r['stall']:9.1f}{r['err_max']:10.2f}{r['jerk']:8.3f}{r['over']:8.2f}")
