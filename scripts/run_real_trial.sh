@@ -44,6 +44,11 @@ if [ $RC -ne 0 ]; then
 fi
 
 ~/lerobot-work/lerobot/.venv/bin/python scripts/real_pick_place.py --color "$COLOR" --auto --refine 1 $CONFIRM_END "${ARGS[@]}"
+RC=$?
+if [ $RC -eq 2 ]; then  # 2 = 引数の間違い(argparse の決まりの終了コード)。腕は動いていないので、試験として記録しない
+    echo "【中止】real_pick_place.py に渡した引数が間違っています(上の usage を参照。コマンドの末尾の余計な文字、綴りの間違いなど)。腕は動いていません。記録もしていません。"
+    exit 1
+fi
 
 sleep 2  # 腕が止まって、カメラの前から外れるのを待つ
 .venv/bin/python scripts/detect_cubes_world.py --out-json trial_after.json --out-png trial_after.png
