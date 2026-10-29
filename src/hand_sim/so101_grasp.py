@@ -215,7 +215,7 @@ class NeighborCollision(ValueError):
     """IK が解ける向きは有るが、どの向きでも、開いた指が隣の立方体にぶつかるときに投げる。(ValueError の仲間にして、既存の except ValueError でも受けられる)"""
 
 
-def plan_for_cube(model, cube_pos, place_xy, cube_yaw=0.0, site_offset=(0.0, 0.0, 0.0), neighbors=(), info=None, hold_offset=(0.0, 0.0, 0.0)):
+def plan_for_cube(model, cube_pos, place_xy, cube_yaw=0.0, site_offset=(0.0, 0.0, 0.0), neighbors=(), info=None, hold_offset=(0.0, 0.0, 0.0), grip_open=GRIP_OPEN):
     """立方体が机の上で cube_yaw [rad] だけ回っているとき、指を立方体の面に合わせた掴み方を探して、(姿勢の辞書, 指の向き yaw) を返す。
 
     指の開閉の向きは、立方体の面に垂直でないと、角(かど)に当たって立方体が回ってしまう。
@@ -225,6 +225,7 @@ def plan_for_cube(model, cube_pos, place_xy, cube_yaw=0.0, site_offset=(0.0, 0.0
     neighbors: 隣にある、ほかの立方体 [(x [m], y [m], yaw [rad]), ...]。指定すると、開いた指が隣にぶつかる向きは飛ばして、次の候補を使う
       (grasp_clearance.py。手の向きは 90° ごとに 4 通りあり、指の開閉の向きに隣が無い向きを選ぶ)。どの向きでもぶつかるなら NeighborCollision。
     hold_offset: plan_pick_place と同じ(掴んだあとの位置だけのずれ。クッション用)。
+    grip_open: 隣との距離を調べるときの、指を開く角度 [rad]。実機で広く開くとき(クッション付き)は、その角度を渡す(輪郭が広がるため)。既定は GRIP_OPEN。
     info: 辞書を渡すと、選んだ経過を書き込む({"skipped": 飛ばした向きの数, "clearance_mm": 選んだ向きの、隣との距離})。呼び出し側が、記録や表示に使う。
     """
     from hand_sim.grasp_clearance import collides  # 隣を調べるときだけ使うので、ここで import する(sim 側の読み込みを軽く保つ)
@@ -244,7 +245,7 @@ def plan_for_cube(model, cube_pos, place_xy, cube_yaw=0.0, site_offset=(0.0, 0.0
             continue
         solved_any = True
         if len(neighbors):
-            hit, d = collides(model, poses["grasp"], GRIP_OPEN, neighbors)
+            hit, d = collides(model, poses["grasp"], grip_open, neighbors)
             if hit:
                 skipped += 1
                 continue

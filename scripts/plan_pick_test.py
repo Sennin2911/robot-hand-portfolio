@@ -22,7 +22,7 @@ import numpy as np  # noqa: E402
 from hand_sim.cube_world import PADS  # noqa: E402  置き場の中心(judge_real_trial.py と共有)
 from hand_sim.grasp_calibration import load_site_offset  # noqa: E402
 from hand_sim.sim_real import real_to_sim, sim_to_real  # noqa: E402
-from hand_sim.so101_grasp import GRIP_CLOSE, GRIP_OPEN, NeighborCollision, plan_for_cube  # noqa: E402
+from hand_sim.so101_grasp import GRIP_CLOSE, NeighborCollision, plan_for_cube  # noqa: E402
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--color", required=True, choices=["red", "green", "blue"])
@@ -60,9 +60,17 @@ if err.any():
 # 閉じる指令は、sim の GRIP_CLOSE からの換算(3.9。クッション無しの指向け)ではなく、触れた読みよりスポンジのへこみ分(2.5 mm ÷ 約 1.8 mm/読み ≒ 1.5〜2)深くした値。
 # サーボの力は「読み − 指令」に比例するので、深すぎるとクッションを潰し切ってモーターに無理がかかる。
 REAL_GRIP_CLOSE = 20.0
+# 開く角度 [rad](sim の gripper の関節角)。クッションは両側で 16 mm 隙間を狭める。sim で、gripperframe から見た指の面の位置(先端から 5 mm 奥)を測ると、
+#   固定側 z = 0、動く側 z = 50.8 mm(0.5 rad)/ 57.9(0.6)/ 65.1(0.7)。クッション込みでは、固定側 8 mm、動く側 −8 mm。
+#   立方体は掴む前に z = 29 + 3.5 = 32.5 mm(下の APPROACH_OFFSET)なので、遠い側の面は 47.5 mm。0.5 では動く側のクッション(42.8 mm)に当たる。
+#   0.7 なら動く側が 57.1 mm で、立方体の両側に約 10 mm ずつ余る。
+REAL_GRIP_OPEN = 0.7
 REAL_GRIP_EMPTY = 9.4  # 空で閉じ切った読み。何も掴めなかったかの判定(real_pick_place.py)に使う
 # 掴んだ立方体の位置のずれ(手の座標 [m])。固定側のクッションの面が、厚み 8 mm 動く側へ寄り、挟んで 2.5 mm へこむので、立方体は動く側へ +5.5 mm 寄る。
 HOLD_OFFSET = np.array([0.0, 0.0, 0.0055])
+# 掴む前(降下)の立方体の位置のずれ(手の座標 [m])。固定側のクッションの面が 8 mm 出て、固定側の隙間が 16 → 約 8 mm に減り、降下でクッションが立方体に当たったため、動く側へ +3.5 mm 寄せる(固定側の隙間 約 12 mm)。
+# plan_for_cube の site_offset は「掴む前」と「掴んだ後」の両方に足されるので、掴んだ後には HOLD_OFFSET から同じ量を引いて、結果が +5.5 mm のままになるようにする。
+APPROACH_OFFSET = np.array([0.0, 0.0, 0.0035])
 site_offset = load_site_offset()  # 実機で掴んだときの測定から貯めた、指の面のずれ(手の座標 [m])。まだ測定が無ければ 0(update_grasp_offset.py が貯める)
 if site_offset.any():
     print(f"掴みの校正(実機で掴んだ測定の中央値): 手の座標 z を {site_offset[2] * 1000:+.1f} mm ずらして計画する")
@@ -71,7 +79,8 @@ neighbors = [(d["x_m"], d["y_m"], np.radians(d["yaw_deg"])) for c, d in det.item
 info = {}
 try:
     poses, hand_yaw = plan_for_cube(model, np.array([cube["x_m"] - err[0], cube["y_m"] - err[1], CUBE_M / 2]), np.array(PADS[args.color]) - err, np.radians(cube["yaw_deg"]),
-                                    site_offset=site_offset, neighbors=neighbors, info=info, hold_offset=HOLD_OFFSET)
+                                    site_offset=site_offset + APPROACH_OFFSET, neighbors=neighbors, info=info,
+                                    hold_offset=HOLD_OFFSET - APPROACH_OFFSET, grip_open=REAL_GRIP_OPEN)
 except NeighborCollision as e:
     # 終了コード 3 = 隣の立方体が近すぎて、どの向きでも掴めない(run_real_trial.sh が、失敗の分類「隣接」にする)。1 は、その他の失敗
     print(f"掴めない: {e}。隣の立方体を、離して置き直す")
@@ -89,16 +98,16 @@ def real_cmd(q5, grip_rad):
     return {k: float(v) for k, v in act.items()}
 
 
-G_OPEN, G_CLOSE = real_cmd(poses["grasp"], GRIP_OPEN)["gripper.pos"], REAL_GRIP_CLOSE
+G_OPEN, G_CLOSE = real_cmd(poses["grasp"], REAL_GRIP_OPEN)["gripper.pos"], REAL_GRIP_CLOSE
 stages = [
-    ("1 立方体の真上へ(指を開く)", "above", GRIP_OPEN),
-    ("2 降下", "grasp", GRIP_OPEN),
+    ("1 立方体の真上へ(指を開く)", "above", REAL_GRIP_OPEN),
+    ("2 降下", "grasp", REAL_GRIP_OPEN),
     ("3 指を閉じる", "grasp", GRIP_CLOSE),
     ("4 持ち上げる", "above", GRIP_CLOSE),
     ("5 置き場の真上へ", "place_above", GRIP_CLOSE),
     ("6 降下", "place", GRIP_CLOSE),
-    ("7 指を開く", "place", GRIP_OPEN),
-    ("8 上がる", "place_above", GRIP_OPEN),
+    ("7 指を開く", "place", REAL_GRIP_OPEN),
+    ("8 上がる", "place_above", REAL_GRIP_OPEN),
 ]
 plan = {"neighbors": [[round(x, 4), round(y, 4)] for x, y, _ in neighbors], "avoided_neighbor": bool(info.get("skipped")), "neighbor_clearance_mm": info.get("clearance_mm"),
         "tag": f"PICK_{args.color}", "assumed_start": REST, "home": REST, "color": args.color, "cube": cube, "hand_yaw_deg": float(np.degrees(hand_yaw)),
