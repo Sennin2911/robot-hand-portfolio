@@ -106,6 +106,14 @@ def classify(color):
     return False, "運搬中の落下", f"置き場から {d_pad:.1f} mm、元の位置から {d_orig:.1f} mm の、どちらでもない場所にある", extra
 
 
+# 腕が動かずに終わった試験(実行が結果を書く前に終わった、開始の姿勢が休めの姿勢から離れていた、最初の確認で Ctrl+C、など)は、
+# ロボットの動作の結果ではないので、記録しない。--stage-failed(動かす前に失敗)の場合は、下で従来どおり扱う。
+if not args.stage_failed:
+    _res = read_json("real_trial_result.json")
+    if _res is None or _res.get("arm_moved") is False:
+        print("\n【記録しない】腕が動かずに終わりました(real_trial_result.json が無い、または、腕に指令を送る前に止まった)。ロボットの動作の結果ではないので、試験として数えません。")
+        sys.exit(0)
+
 if args.stage_failed:
     before = read_json("trial_before.json")
     if args.stage_failed == "neighbor":
@@ -144,6 +152,13 @@ with open(LOG, "a", newline="") as f:  # "a": 末尾に追記する。newline=""
     if new_file:
         w.writeheader()
     w.writerow(row)
+
+# 試験ごとの検出画像と検出結果(向き・IoU を含む)を残す。あとから「その試験で、向きが正しく検出されていたか」を確かめるため
+# (trial_before.* は、次の試験で消えるので、残さないと、原因を調べられない)
+(OUT / "trial_archive").mkdir(exist_ok=True)
+for _name in ("trial_before.png", "trial_before.json", "trial_after.png"):
+    if (OUT / _name).exists():
+        shutil.copy(OUT / _name, OUT / "trial_archive" / f"{LOG.stem}_{n:03d}_{_name}")
 
 print(f"\n試験 {n}: {args.color}  →  {'成功' if ok else '失敗(' + cls + ')'}  {detail}")
 if extra.get("final_err_mm") not in (None, ""):

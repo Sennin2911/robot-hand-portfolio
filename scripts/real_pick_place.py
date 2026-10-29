@@ -103,6 +103,7 @@ robot = SO101Follower(SOFollowerRobotConfig(port="/dev/ttyACM0", id="my_follower
 robot.connect()  # 接続するとトルクが入り、今の姿勢を保つ。接続中は、腕を手で支える
 current = None
 last = 0  # 最後に終えた段階の番号
+arm_moved = False  # 腕に指令を 1 回でも送ったか。False のまま終わった試験は、判定が記録しない(動かずに止まったものは、ロボットの失敗ではないため)
 abort_reason = None  # --auto の安全装置などで中止した理由(None = 最後まで進んだ)。real_trial_result.json に書く
 grip_after_close = None  # 段階 3 のあとの指の読み(立方体を掴めたかの目安)
 max_joint_err = 0.0  # 腕が動く段階のあとの、関節の読みと指令の差の最大 [度]
@@ -157,6 +158,7 @@ try:
         # 速くしすぎないよう、1 回の動きは 0.8 秒以上(持ち上げ・上がる 4、8 は 1.5 秒以上)かける。
         # 診断(diagnose_vertical_motion.py)の実測: 持ち上げを 0.8 秒で動かすと、サーボが指令に 4° 遅れ、止まる瞬間に 0.35° 行き過ぎて揺れる。1.5 秒以上なら、行き過ぎは 0
         seconds = args.descent_seconds if (stage in "26" and args.descent_seconds > 0) else max(1.5 if stage in "48" else 0.8, st["seconds"] / speed)
+        arm_moved = True
         move_to(robot, current, sent, seconds)
         current = sent
         obs = wait_settled(robot, args.settle if stage in "1256" else min(args.settle, 0.3))  # 止まったらすぐ次へ(最長は --settle)
@@ -231,7 +233,7 @@ finally:
         except NameError:  # current が未定義(接続直後の失敗)のとき
             pass
         (ROOT / "outputs" / "real_trial_result.json").write_text(json.dumps(  # 試験の判定(judge_real_trial.py)が読む
-            {"tag": plan["tag"], "time": time.strftime("%Y-%m-%d %H:%M:%S"), "last_stage": last, "total_stages": len(plan["stages"]), "abort_reason": abort_reason,
+            {"tag": plan["tag"], "time": time.strftime("%Y-%m-%d %H:%M:%S"), "last_stage": last, "total_stages": len(plan["stages"]), "arm_moved": arm_moved, "abort_reason": abort_reason,
              "grip_after_close": grip_after_close, "max_joint_err_deg": round(max_joint_err, 2), "cycle_s": round(time.time() - t_start, 1)}, ensure_ascii=False, indent=2))
         if not args.auto or args.confirm_end:
             input("\n腕を支えたら Enter(このあとトルクが切れて、腕は落ちる): ")
