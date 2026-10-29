@@ -40,8 +40,9 @@ if all_rows:
     k, n = sum(r["success"] == "True" for r in all_rows), len(all_rows)
     lo, hi = wilson(k, n)
     print(f"\n1 個ずつの成功率(主な指標): {k}/{n} = {100 * k / n:.0f}%(95% 区間 {100 * lo:.0f}〜{100 * hi:.0f}%)")
-    full = [ep for ep, rs in episodes.items() if len(rs) == 3 and all(r["success"] == "True" for r in rs)]
-    print(f"3 個全部が入ったエピソード(補助): {len(full)}/{len(episodes)}")
+    expected = max(len(rs) for rs in episodes.values())  # 1 エピソードの色の数(--colors で 1〜3 色に変えられるので、記録の最大から決める)
+    full = [ep for ep, rs in episodes.items() if len(rs) == expected and all(r["success"] == "True" for r in rs)]
+    print(f"{expected} 個全部が入ったエピソード(補助): {len(full)}/{len(episodes)}")
     for c in ("red", "green", "blue"):
         rc = [r for r in all_rows if r["color"] == c]
         if rc:

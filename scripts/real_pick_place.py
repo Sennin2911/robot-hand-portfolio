@@ -57,6 +57,8 @@ parser.add_argument("--grasp-max", type=float, default=25.0,
                          "面で挟んだ実測は 20.2〜22.1(30 mm)。読み 1 あたり約 1.8 mm なので、25 は幅 約 35 mm に相当。対角(42 mm)なら約 28.6。立方体の大きさを変えたら、この値も変える")
 parser.add_argument("--speed", type=float, default=1.0, help="動かす速さの倍率(2 なら、計画の秒数の半分で動かす)。降下(2、6)は、安全のため 1.5 倍までに抑える")
 parser.add_argument("--settle", type=float, default=1.0, help="動いたあと、止まるのを待つ秒数")
+parser.add_argument("--force-hidden", action="store_true",
+                    help="確認用(連続仕分け)。色の切り替えの最初の検出で、「腕が立方体を隠して見えない」ことにして、休めの姿勢へ戻って検出し直す動きを、必ず通す。実際に隠れる場面を作るのは難しいため")
 parser.add_argument("--then", nargs="*", default=[], choices=["red", "green", "blue"], metavar="COLOR",
                     help="連続仕分け。--color の色を運んだあと、腕を休めの姿勢へ戻さず、置いた姿勢のまま、ここに並べた色を順に運ぶ(例: --then green blue)。"
                          "色の切り替えのたびに、検出と計画を、この中から呼び出す(今の姿勢のまま検出し、腕が立方体を隠して見えないときだけ、休めの姿勢へ戻って検出し直す)。"
@@ -178,8 +180,9 @@ def advance(prev, queue, at_rest):
     seen = set(json.loads((OUT / "trial_before.json").read_text())["cubes"])  # 前の検出で見えていた色
     print("\n=== 次の立方体の検出(" + ("休めの姿勢から" if at_rest else "置いた姿勢のまま") + ")===")
     rc, data = run_detect("trial_next")
-    if not (rc == 0 and data is not None and seen <= set(data["cubes"])) and not at_rest:
-        print("→ 腕が立方体を隠している(または検出できなかった)。休めの姿勢へ戻って、検出し直す")
+    hidden = args.force_hidden or not (rc == 0 and data is not None and seen <= set(data["cubes"]))  # --force-hidden: 確認用に、隠れたことにする
+    if hidden and not at_rest:
+        print("→ " + ("確認用(--force-hidden)" if args.force_hidden else "腕が立方体を隠している(または検出できなかった)") + "。休めの姿勢へ戻って、検出し直す")
         current = {k: v for k, v in robot.get_observation().items() if k.endswith(".pos")}
         move_to(robot, current, {**plan["home"], "gripper.pos": current["gripper.pos"]}, max(3.0, plan.get("return_seconds", 8.0) / args.speed))
         current = {**plan["home"], "gripper.pos": current["gripper.pos"]}
