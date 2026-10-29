@@ -5,6 +5,7 @@
 右: 立方体の向き(0〜90°)の分布。空いている区間も、試す向きの候補。
 無効(メモが「無効」で始まる)行は使わない。使い方: .venv/bin/python scripts/plot_trial_coverage.py
 """
+import argparse
 import csv
 import sys
 from pathlib import Path
@@ -26,7 +27,12 @@ REACH = 0.23  # 届く限界(肩の軸から)[m]。plan_pick_test.py と同じ
 CELL = 0.04  # 空き具合を見るマスの大きさ [m]
 Y_MIN, Y_MAX = -0.20, 0.10  # 立方体を置く範囲の、左右(カメラに写って、置き場と重ならない範囲の目安)
 
-rows = [r for r in csv.DictReader(open(ROOT / "outputs" / "real_trials.csv")) if not r["note"].startswith("無効") and r["true_x"] != ""]
+parser = argparse.ArgumentParser()
+parser.add_argument("--since", default="", help="この日時(例: '2026-10-29 14:00')以降の試験だけを描く。指を替えた(クッション)後だけを見たいときなど。既定は全部")
+parser.add_argument("--out", default="trial_coverage.png", help="保存する outputs/ の中のファイル名")
+args = parser.parse_args()
+# 文字列の大小比較: 'YYYY-MM-DD HH:MM:SS' の形なら、日時の前後と同じ順になる。[頻度] この形式の日時では定番の簡単な書き方
+rows = [r for r in csv.DictReader(open(ROOT / "outputs" / "real_trials.csv")) if not r["note"].startswith("無効") and r["true_x"] != "" and r["time"] >= args.since]
 if not rows:
     sys.exit("まだ、位置の分かる試験が無い")
 X, Y = np.array([float(r["true_x"]) for r in rows]), np.array([float(r["true_y"]) for r in rows])
@@ -94,7 +100,7 @@ axh.invert_yaxis()
 for s in ("top", "right"):
     axh.spines[s].set_visible(False)
 fig.tight_layout()
-out = ROOT / "outputs" / "trial_coverage.png"
+out = ROOT / "outputs" / args.out
 fig.savefig(out, dpi=130)
 print(f"保存: {out}(試験 {len(rows)} 回ぶん。腕を動かしたのは {int(RAN.sum())} 回)")
 if empty:
