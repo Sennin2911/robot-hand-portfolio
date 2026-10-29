@@ -30,7 +30,7 @@ parser.add_argument("--stage-failed", choices=["detect", "plan", "neighbor"],
 parser.add_argument("--tol-mm", type=float, default=15.0, help="置き場の中心から、この距離(mm)以内に立方体の中心があれば、置けたとみなす")
 parser.add_argument("--touch-mm", type=float, default=5.0, help="ほかの立方体が、これ(mm)以上動いたら「軽い接触」(失敗にはしない。測定の誤差が 1〜2 mm あるので、これより小さい動きは見分けない)")
 parser.add_argument("--others-fail-mm", type=float, default=10.0, help="ほかの立方体が、これ(mm)以上動いたら「明らかに動かした」(失敗の分類「他を動かした」)")
-parser.add_argument("--note", default="", help="メモ(照明を変えた、など)を CSV の最後の列に残す")
+parser.add_argument("--note", default=os.environ.get("TRIAL_NOTE", ""), help="メモ(照明を変えた、など)を CSV の最後の列に残す")
 args = parser.parse_args()
 
 OUT = ROOT / "outputs"
