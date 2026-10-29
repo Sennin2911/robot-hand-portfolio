@@ -23,6 +23,13 @@ rm -f outputs/trial_before.json outputs/trial_before.png outputs/trial_detect.lo
 if [ "${PIPESTATUS[0]}" -ne 0 ]; then
     .venv/bin/python scripts/judge_real_trial.py --color "$COLOR" --stage-failed detect; exit 1
 fi
+# 狙う色が「範囲外」(肩に近すぎて届かない。detect_cubes_world.py の reach 判定)なら、動かす前に止める。試験としては記録しない(範囲外は、成功率の対象に入れないため)
+# python -c "…": 1 行だけの Python をその場で実行する。[頻度] シェルの中で JSON を 1 項目だけ読むときの定番。.get(キー, 既定値): キーが無ければ既定値を返す(色が見つからなかった場合も、エラーにならず空になる)
+REACH=$(.venv/bin/python -c "import json,sys; d=json.load(open('outputs/trial_before.json')); print(d['cubes'].get(sys.argv[1], {}).get('reach', ''))" "$COLOR" 2>/dev/null)
+if [ "$REACH" = "unreachable" ]; then
+    echo "【中止】$COLOR の立方体は、肩に近すぎて届かない範囲(範囲外)です。肩の軸から 10 cm 以上に置き直してください。腕は動かしていません。記録もしていません。"
+    exit 1
+fi
 cp outputs/trial_before.json outputs/cubes_detected.json 2>/dev/null  # plan_pick_test.py は、この名前のファイルを読む。 (立方体が 1 つも見つからなければファイルが無く、cp は失敗するが、次の plan_pick_test.py が「検出結果が無い」で止まる)
 MUJOCO_GL=egl .venv/bin/python scripts/plan_pick_test.py --color "$COLOR"
 RC=$?  # 直前のコマンドの終了コード(0 = 成功、3 = 隣の立方体が近すぎて、どの向きでも掴めない、その他 = 届かないなど)
