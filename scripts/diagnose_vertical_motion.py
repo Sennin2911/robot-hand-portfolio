@@ -23,7 +23,9 @@ parser = argparse.ArgumentParser()
 parser.add_argument("--color", default="green", choices=["red", "green", "blue"])
 parser.add_argument("--down", type=float, nargs="+", default=[2.5], help="降下にかける秒数(複数。順に試す)")
 parser.add_argument("--up", type=float, nargs="+", default=[1.5], help="持ち上げにかける秒数(複数。順に試す)")
-parser.add_argument("--accel", type=int, nargs="+", default=[254, 80, 40, 20],
+parser.add_argument("--p", type=int, help="サーボの P_Coefficient(位置の追従の強さ。LeRobot の既定 16)。指定すると、最初に書き換える(トルクを一度切るので、腕を休めの姿勢で支えておく)")
+parser.add_argument("--d", type=int, help="サーボの D_Coefficient(揺れを抑える成分。LeRobot の既定 32)。指定すると、最初に書き換える")
+parser.add_argument("--accel", type=int, nargs="+", default=[254],
                     help="サーボの加速度 Acceleration(0〜254。1 あたり 100 ステップ/秒² ≒ 8.8°/秒²)。複数を順に試す。LeRobot は接続時に 254(最大 = 指令ごとに全力で追う)にする。小さいほど、サーボが自分で滑らかに加減速する")
 args = parser.parse_args()
 
@@ -68,6 +70,15 @@ rows, results = [], []
 try:
     start = {k: v for k, v in robot.get_observation().items() if k.endswith(".pos")}
     input("腕を休めの姿勢にして、机の上と腕の動く範囲を空けた(立方体なし)。Enter で、真上の姿勢へゆっくり移動(やめるなら Ctrl+C): ")
+    if args.p is not None or args.d is not None:
+        # P、D は EEPROM の値で、トルクを切らないと書けない(LeRobot も、接続時に torque_disabled() の中で書いている)。休めの姿勢のうちに行う
+        with robot.bus.torque_disabled():  # with: ブロックの間だけトルクを切り、抜けると自動で入れ直す。[頻度] 機器の設定を書き換えるときの定番
+            for motor in robot.bus.motors:
+                if args.p is not None:
+                    robot.bus.write("P_Coefficient", motor, args.p)
+                if args.d is not None:
+                    robot.bus.write("D_Coefficient", motor, args.d)
+        print(f"P = {args.p}、D = {args.d} に設定した(None = 変えていない)。このあと動く様子を目で見て、揺れ方を教えてください")
     move_to(robot, start, above, 8.0)
     time.sleep(1.0)
     for acc in args.accel:
@@ -82,7 +93,7 @@ try:
     move_to(robot, now, start, 8.0)  # 休めの姿勢へ戻る
     input("腕を支えたら Enter(このあとトルクが切れて、腕は落ちる): ")
 finally:
-    robot.disconnect()  # 切断してもサーボの加速度は残る。次に connect() すると 254 に書き直される(LeRobot の既定)
+    robot.disconnect()  # P、D、加速度は、次に connect() すると LeRobot の既定(P 16、D 32、加速度 254)に書き直される。この実験の設定は残らない
 if rows:
     out = ROOT / "outputs" / f"vertical_motion_{time.strftime('%Y%m%d_%H%M%S')}.csv"
     with open(out, "w", newline="") as f:  # with ... as: ブロックを抜けると、自動でファイルを閉じる。[頻度] ファイルを扱うときの定番

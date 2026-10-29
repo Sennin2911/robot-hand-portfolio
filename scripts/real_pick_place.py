@@ -139,7 +139,9 @@ try:
             sent = {**goal, **{k: current[k] for k in ARM_KEYS}}  # 指だけ動かす段階(3、7)は、腕を今の指令のままにする(goal に戻すと、足した補正量の分、腕が動いてしまう)
         if any(abs(v) >= 0.3 for v in bias.values()):
             print("  先回し: " + ", ".join(f"{k.split('.')[0][:9]} {v:+.1f}°" for k, v in bias.items()))
-        move_to(robot, current, sent, max(0.8, st["seconds"] / speed))  # 速くしすぎないよう、1 回の動きは 0.8 秒以上かける
+        # 速くしすぎないよう、1 回の動きは 0.8 秒以上(持ち上げ・上がる 4、8 は 1.5 秒以上)かける。
+        # 診断(diagnose_vertical_motion.py)の実測: 持ち上げを 0.8 秒で動かすと、サーボが指令に 4° 遅れ、止まる瞬間に 0.35° 行き過ぎて揺れる。1.5 秒以上なら、行き過ぎは 0
+        move_to(robot, current, sent, max(1.5 if stage in "48" else 0.8, st["seconds"] / speed))
         current = sent
         obs = wait_settled(robot, args.settle if stage in "1256" else min(args.settle, 0.3))  # 止まったらすぐ次へ(最長は --settle)
         if stage in "1256":  # 腕が動く段階だけ、関節の読みで補正(指だけ動かす 3、7 と、持ち上げ・上がる 4、8 は、しない)
