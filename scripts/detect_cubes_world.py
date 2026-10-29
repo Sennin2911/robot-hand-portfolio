@@ -79,7 +79,7 @@ for color in ("red", "green", "blue"):
     yaw_world, _fit_center, fit_iou = fit_cube_yaw(mask, cam_pos, cam_R, cam["K"], pixel_to_world_plane_K(u, v, cam_pos, cam_R, cam["K"], CUBE_M / 2)[:2])
     if fit_iou < 0.5:
         print(f"  (注意: {color} の形の当てはめの重なり IoU = {fit_iou:.2f} と低い。向きが当てにならない。塊が欠けている・他の物と混ざっている可能性)")
-    out[color] = {"x_m": float(xy[0]), "y_m": float(xy[1]), "yaw_deg": yaw_world, "uv": [float(u), float(v)]}
+    out[color] = {"x_m": float(xy[0]), "y_m": float(xy[1]), "yaw_deg": yaw_world, "yaw_iou": round(fit_iou, 2), "uv": [float(u), float(v)]}
     print(f"{color:5s}: 世界座標 x = {xy[0] * 1000:6.1f} mm、y = {xy[1] * 1000:6.1f} mm、向き(世界座標、0〜90°)= {yaw_world:.0f}°(画素 ({u:.0f}, {v:.0f}))")
     cv2.drawMarker(annotated, (int(u), int(v)), draw[color], cv2.MARKER_CROSS, 40, 3)
     cv2.putText(annotated, color, (int(u) + 25, int(v) - 25), cv2.FONT_HERSHEY_SIMPLEX, 1.0, draw[color], 2)

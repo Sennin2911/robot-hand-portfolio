@@ -47,6 +47,9 @@ model = mujoco.MjModel.from_xml_path(str(ROOT / "models/so101/so101_new_calib.xm
 data = mujoco.MjData(model)
 sid = model.site("gripperframe").id
 AXIS = data.xpos[model.body("shoulder").id][:2].copy() if mujoco.mj_forward(model, data) is None else None
+if cube.get("yaw_iou", 1.0) < 0.5:  # dict.get(キー, 既定値): キーが無ければ既定値。古い検出結果には yaw_iou が無い。[頻度] 定番
+    print(f"  ※ 注意: 向きの当てはめの重なり IoU = {cube['yaw_iou']:.2f} と低い(0.5 未満)。向きが 10° 以上外れている可能性がある。"
+          "心配なら、検出し直す(立方体の位置を少し動かす、露出を変える)。掴んだあとの指の読みが 25 を超えれば、安全装置が止める")
 r_cube = float(np.hypot(cube["x_m"] - AXIS[0], cube["y_m"] - AXIS[1]))
 print(f"{args.color}: 位置 ({cube['x_m'] * 1000:.0f}, {cube['y_m'] * 1000:.0f}) mm、肩の軸から {r_cube * 100:.1f} cm、向き {cube['yaw_deg']:.0f}°")
 if r_cube > 0.23:
