@@ -24,6 +24,8 @@ def marker_mask(shape, cam_pos, cam_R, K, margin_px=4):
 
 WORKSPACE_X_M = (0.07, 0.40)  # 立方体を探す範囲の、前後(世界座標 x [m])。0.07 より後ろは、ロボットの土台(橙色の部品などが、「赤」と誤検出された)
 WORKSPACE_Y_M = (-0.30, 0.30)  # 左右(世界座標 y [m])
+EXTRA_X_M = (0.09, 0.34)  # 探す範囲に必ず入れる、前後の端(search_hull)。立方体が枠の縁にまたがらないため
+EXTRA_Y_M = (-0.20, 0.20)  # 同、左右の端
 
 
 def workspace_mask(shape, cam_pos, cam_R, K):
@@ -45,6 +47,11 @@ def search_hull(shape, cam_pos, cam_R, K, scale=1.3, extend_down=0):
     hull = cv2.convexHull(pts).reshape(-1, 2)
     hull = hull.mean(axis=0) + (hull - hull.mean(axis=0)) * scale
     hull[hull[:, 1] > hull[:, 1].mean(), 1] += extend_down  # 画像の下側の頂点(v が平均より大きい点)だけを、下へ動かす
+    # 板の左手前(世界座標で y が負、x が小さい側)も、立方体を置く範囲。ここは、マーカーの角から離れていて、枠の縁が立方体を横切り、塊が欠けた
+    # (試験 1、32、33: (113, −150) mm。IoU 0.39 で、向きが 0° でも 45° でも 67〜70° と出て、斜めに掴んで失敗した)。
+    # 枠は、画像の中心から広げるので、場所ごとの余裕が不ぞろいになる。だから、広げたあとの枠に、世界座標で決めた点(立方体の上面の高さ 30 mm)を足して、凸な枠を作り直す。
+    extra = project_points_K(np.array([[x, y, 0.03] for x in EXTRA_X_M for y in EXTRA_Y_M]), cam_pos, cam_R, K).astype(np.float32)
+    hull = cv2.convexHull(np.vstack([hull.astype(np.float32), extra])).reshape(-1, 2)  # np.vstack: 配列を縦に積む。[頻度] 点を足すときの定番
     hull[:, 1] = np.clip(hull[:, 1], 0, shape[0] - 1)  # 画像の外へはみ出さないようにする
     return hull
 
