@@ -11,6 +11,7 @@
 import argparse
 import csv
 import json
+import shutil
 import sys
 import time
 from pathlib import Path
@@ -108,7 +109,22 @@ if args.stage_failed:
         ok, cls, detail, extra = False, "隣接", "隣の立方体が近すぎて、開いた指がどの向きでもぶつかる(隣を離して置き直す)", {}
         extra.update(true_x=round(float(xy(before, args.color)[0]), 4), true_y=round(float(xy(before, args.color)[1]), 4))
     elif args.stage_failed == "detect" or xy(before, args.color) is None:
-        ok, cls, detail, extra = False, "検出失敗", "板のマーカーが 4 個以上見えない、または立方体の色が見つからない", {}
+        # 原因を、検出のログ(run_real_trial.sh が outputs/trial_detect.log に保存)から書く。ログと画像は、あとで見返せるよう日時つきで残す
+        log_path = ROOT / "outputs" / "trial_detect.log"
+        log_text = log_path.read_text() if log_path.exists() else ""
+        if "板のマーカーが" in log_text and "個しか見えない" in log_text:
+            reason = next(l for l in log_text.splitlines() if "個しか見えない" in l)  # next(ジェネレータ式): 条件に合う最初の行を取る。[頻度] 「最初の 1 つだけ欲しい」ときの定番
+        elif f"{args.color:5s}: 見つからない" in log_text:
+            reason = f"板は見えたが、{args.color} の立方体が見つからない(暗い・影・探す範囲の外・マーカーに隠れた、など)"
+        else:
+            reason = "原因不明(ログが無い)"
+        detail = f"{reason}。ログ: outputs/detect_failures/"
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        (ROOT / "outputs" / "detect_failures").mkdir(exist_ok=True)
+        for src, ext in ((log_path, "log"), (ROOT / "outputs" / "trial_before.png", "png")):
+            if src.exists():  # 画像は、検出が最後まで進んだときだけある。shutil.copy: ファイルのコピー。[頻度] 定番
+                shutil.copy(src, ROOT / "outputs" / "detect_failures" / f"{stamp}_{args.color}.{ext}")
+        ok, cls, extra = False, "検出失敗", {}
     else:
         ok, cls, detail, extra = False, "届かない", "計画が作れなかった(遠すぎる、可動域の端、机に近い経路など。上の表示を参照)", {}
         extra.update(true_x=round(float(xy(before, args.color)[0]), 4), true_y=round(float(xy(before, args.color)[1]), 4))

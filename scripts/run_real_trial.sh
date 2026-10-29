@@ -15,9 +15,12 @@ ARGS=()
 for a in "$@"; do  # 引数を 1 つずつ見る。--no-confirm-end だけ、このスクリプトで使う(real_pick_place.py には渡さない)
     if [ "$a" = "--no-confirm-end" ]; then CONFIRM_END=""; else ARGS+=("$a"); fi
 done
-rm -f outputs/trial_before.json outputs/trial_after.json outputs/cubes_detected.json outputs/real_trial_result.json  # 前の試験の結果を、先に消す(取り違えないため)
+rm -f outputs/trial_before.json outputs/trial_before.png outputs/trial_detect.log outputs/trial_after.json outputs/cubes_detected.json outputs/real_trial_result.json  # 前の試験の結果を、先に消す(取り違えないため)
 
-if ! .venv/bin/python scripts/detect_cubes_world.py --out-json trial_before.json --out-png trial_before.png; then
+# tee: 画面に出しながら、同じ内容をファイルにも保存する。[頻度] 「画面で見たいし、あとで原因も調べたい」ときの定番。judge_real_trial.py が、検出失敗の原因をこのログから記録する
+# ${PIPESTATUS[0]}: パイプの左側(python)の終了コード。普通の $? は右側(tee)のものになるため、こちらを使う
+.venv/bin/python scripts/detect_cubes_world.py --out-json trial_before.json --out-png trial_before.png 2>&1 | tee outputs/trial_detect.log
+if [ "${PIPESTATUS[0]}" -ne 0 ]; then
     .venv/bin/python scripts/judge_real_trial.py --color "$COLOR" --stage-failed detect; exit 1
 fi
 cp outputs/trial_before.json outputs/cubes_detected.json 2>/dev/null  # plan_pick_test.py は、この名前のファイルを読む。 (立方体が 1 つも見つからなければファイルが無く、cp は失敗するが、次の plan_pick_test.py が「検出結果が無い」で止まる)
